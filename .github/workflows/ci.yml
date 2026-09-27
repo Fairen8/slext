@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+
+jobs:
+  static-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Python syntax
+        run: |
+          python3 -m py_compile bin/*.py
+
+      - name: JavaScript syntax
+        run: node --check www/ext.js
+
+      - name: Shell syntax
+        run: |
+          bash -n install.sh
+          bash -n uninstall.sh
+          bash -n bin/apply-injection.sh
+          bash -n tests/verify-install.sh
+
+      - name: Патчер содержит ключевые маркеры
+        run: |
+          grep -q 'slext-px-format' bin/patch_site_page.py
+          grep -q 'slext-gate' bin/patch_site_page.py
+          grep -q 'slext-skip' bin/patch_site_page.py
+
+      - name: Секреты не закоммичены
+        run: |
+          if grep -rIn --exclude-dir=.git -E 'PGPASSWORD=[A-Za-z0-9]+$' . ; then
+            echo "Найден похожий на реальный пароль PGPASSWORD"; exit 1
+          fi
+          if grep -rIn --exclude-dir=.git -E 'BEGIN (RSA|OPENSSH|EC) PRIVATE KEY' . ; then
+            echo "Найден приватный ключ"; exit 1
+          fi

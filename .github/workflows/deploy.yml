@@ -1,0 +1,59 @@
+name: deploy
+
+on:
+  push:
+    branches: [prod]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Синтаксис Python/JS/Shell
+        run: |
+          python3 -m py_compile bin/*.py
+          node --check www/ext.js
+          bash -n install.sh
+          bash -n uninstall.sh
+          bash -n bin/apply-injection.sh
+          bash -n deploy/slext-deploy.sh
+          bash -n deploy/install-deploy-access.sh
+
+  deploy:
+    needs: checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Настройка SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id
+          chmod 600 ~/.ssh/id
+          ssh-keyscan -p "${{ secrets.SSH_PORT }}" -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Выгрузка репозитория на сервер (staging)
+        run: |
+          rsync -az --delete --exclude .git \
+            -e "ssh -i ~/.ssh/id -p ${{ secrets.SSH_PORT }} -o StrictHostKeyChecking=accept-new" \
+            ./ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/tmp/slext-stage/"
+
+      - name: Применение на сервере (идемпотентно, с бэкапом)
+        run: |
+          ssh -i ~/.ssh/id -p "${{ secrets.SSH_PORT }}" \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "sudo -n /usr/local/bin/slext-deploy"
