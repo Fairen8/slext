@@ -1,21 +1,24 @@
-name: ci
+name: tests
 
+# Тесты запускаются только в прод-пути:
+#  - pull request в prod — обязательная проверка, без неё merge заблокирован;
+#  - внутри deploy.yml (перед выкаткой) через workflow_call — при провале деплой не стартует.
 on:
-  push:
-    branches: [dev, main, prod]
   pull_request:
+    branches: [prod]
+  workflow_call:
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  static-checks:
-    name: static-checks
+  tests:
+    name: tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -48,8 +51,9 @@ jobs:
 
       - name: Валидность JSON (rulesets)
         run: |
-          python3 -m json.tool deploy/rulesets/prod-main.json >/dev/null
           python3 -m json.tool deploy/rulesets/dev.json >/dev/null
+          python3 -m json.tool deploy/rulesets/main.json >/dev/null
+          python3 -m json.tool deploy/rulesets/prod.json >/dev/null
           python3 -m json.tool deploy/security-settings.json >/dev/null
 
       - name: Патчер содержит ключевые маркеры
