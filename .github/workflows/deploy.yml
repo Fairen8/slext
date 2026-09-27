@@ -18,7 +18,7 @@ jobs:
     if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Проверка процесса (PR + одобрение владельца)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -30,7 +30,7 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v7
         with:
@@ -59,7 +59,7 @@ jobs:
       (needs.policy.result == 'success' || needs.policy.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Настройка SSH
         run: |
