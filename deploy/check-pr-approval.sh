@@ -13,7 +13,7 @@ if [ -z "$REPO" ] || [ -z "$SHA" ]; then
   exit 1
 fi
 
-PR=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '.[0].number // empty' 2>/dev/null || true)
+PR="${POLICY_PR:-$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '.[0].number // empty' 2>/dev/null || true)}"
 if [ -z "$PR" ]; then
   echo "POLICY FAIL: коммит $SHA не связан с pull request (прямой пуш?)."
   echo "Правильно: ветка → PR → одобрение @$OWNER → merge в prod."
