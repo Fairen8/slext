@@ -2,6 +2,7 @@ name: branch-guard
 
 # Контроль процесса для защищённых веток: любой push в prod/main должен быть
 # результатом PR, одобренного владельцем. При нарушении — issue + красный статус.
+# Дополняет нативные rulesets (branches: prod/main).
 on:
   push:
     branches: [prod, main]
@@ -14,7 +15,9 @@ permissions:
 
 jobs:
   policy:
+    name: policy
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -22,7 +25,7 @@ jobs:
         id: check
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
           OWNER: Fairen8
@@ -31,7 +34,7 @@ jobs:
       - name: Сообщить о нарушении
         if: steps.check.outcome == 'failure'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.ref_name }}
           SHA: ${{ github.sha }}
           ACTOR: ${{ github.actor }}

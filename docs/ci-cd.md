@@ -2,48 +2,57 @@
 
 ## Ветки и правила
 
+Поток: **feature → dev → main → prod** (в `prod` можно мёржить только из `main`).
+
 | Ветка | Назначение | Правила |
 |---|---|---|
 | `dev` | рабочая интеграция | PR + 1 одобрение, проверки CI |
-| `prod` | **деплой** | PR **только с одобрением владельца (@Fairen8)**, проверки CI |
-| `main` | стабильная история | как `prod` |
+| `main` | стабильная | PR **только для участников** + **одобрение владельца** (code owner), проверки CI |
+| `prod` | **деплой** | PR **только из `main`** и **одобрение владельца**, проверки CI |
 | `feature/*`, `fix/*`, `docs/*` | рабочие ветки | от `dev`, живут до мержа |
+
+«Только для участников» обеспечивается тем, что прямые пуши в `main`/`prod` запрещены
+(rulesets), а мёржить PR может только владелец/участники с правом записи; посторонние с
+форками могут лишь предложить PR.
 
 ### Как это контролируется
 
-**Важно:** на GitHub Free для приватных репозиториев нативные branch protection / rulesets /
-environment-approvals недоступны (403 «Upgrade to GitHub Pro»). Поэтому защита реализована
-на стороне CI и работает без платного плана:
+Два уровня защиты:
 
-1. **deploy.yml, job `policy`** — перед выкаткой проверяет, что пуш в `prod` является
-   результатом pull request, одобренного владельцем (`deploy/check-pr-approval.sh`).
-   Нет PR или нет одобрения → деплой не запускается.
-2. **branch-guard.yml** — на каждый пуш в `prod`/`main` повторяет проверку; при нарушении
-   создаёт issue и красит workflow.
-3. **CODEOWNERS** (`* @Fairen8`) — GitHub автоматически запрашивает ревью владельца в PR.
+1. **Нативные rulesets GitHub** (работают в публичном репозитории, а в приватном — только
+   с GitHub Pro). Включаются один раз:
+
+   ```bash
+   bash deploy/apply-github-protection.sh
+   ```
+
+   Что настраивается:
+   - `dev`: PR + 1 одобрение, обязательные проверки CI, запрет force-push и удаления;
+   - `prod` и `main`: PR **только с одобрением владельца** (code owner из `CODEOWNERS`),
+     обязательные проверки, linear history, запрет force-push и удаления;
+   - владелец (текущий `gh`-пользователь) получает bypass — команда не может.
+
+2. **CI-контроль (работает всегда):**
+   - `deploy.yml` → job `policy` — перед выкаткой проверяет, что пуш в `prod` является
+     результатом PR, одобренного владельцем (`deploy/check-pr-approval.sh`). Нет PR или
+     нет одобрения → деплой не запускается.
+   - `branch-guard.yml` — на каждый пуш в `prod`/`main` повторяет проверку; при нарушении
+     создаёт issue и красит workflow.
 
 Ручной запуск деплоя (Actions → deploy → Run workflow) policy не проверяет — это осознанный
 путь для владельца.
 
-### Если появится GitHub Pro (рекомендуется)
-
-В репозитории лежат готовые rulesets — включаются двумя командами:
-
-```bash
-gh api -X POST repos/Fairen8/slext/rulesets --input deploy/rulesets/prod-main.json
-gh api -X POST repos/Fairen8/slext/rulesets --input deploy/rulesets/dev.json
-```
-
-Это включит нативные блокировки: запрет force-push и удаления, обязательные проверки CI,
-обязательное ревью (для `prod`/`main` — с требованием code owner).
+Дополнительно скрипт включает **secret scanning + push protection** и Dependabot-алерты
+(для публичных репозиториев бесплатно).
 
 ## Как выкатить новую версию
 
 ```bash
 git push origin feature/my-task        # рабочая ветка
-gh pr create --base dev                # PR в dev (1 одобрение)
+gh pr create --base dev                # PR в dev (1 одобрение коллеги)
 # после мержа в dev:
-gh pr create --base prod --head dev    # PR в prod → одобрение владельца → merge
+gh pr create --base main --head dev    # PR в main (одобрение владельца)
+gh pr create --base prod --head main   # PR в prod (только из main, одобрение владельца)
 ```
 
 После мержа в `prod` автоматически запускается `.github/workflows/deploy.yml`:
@@ -78,23 +87,20 @@ ssh-copy-id -i ~/.ssh/slext_deploy.pub -p <SSH_PORT> <SSH_USER>@<SSH_HOST>
 
 ### 3. Секреты GitHub
 
-В репозитории → Settings → Secrets and variables → Actions добавить:
-
-| Секрет | Значение |
-|---|---|
-| `SSH_HOST` | адрес сервера |
-| `SSH_PORT` | порт SSH |
-| `SSH_USER` | пользователь (например, `fairen8`) |
-| `SSH_KEY` | приватный ключ деплоя (`~/.ssh/slext_deploy`, целиком) |
-
-Через `gh`:
+SSH-доступ деплоя хранится **на уровне окружения `production`** (не репозитория), чтобы его
+нельзя было получить из произвольных workflow/веток. Значения секретов не отображаются никому;
+после публикации репозитория на окружении включается **обязательное подтверждение владельца** —
+без approve деплой (и секреты) недоступны.
 
 ```bash
-gh secret set SSH_HOST -R <owner>/slext --body "<host>"
-gh secret set SSH_PORT -R <owner>/slext --body "<port>"
-gh secret set SSH_USER -R <owner>/slext --body "<user>"
-gh secret set SSH_KEY  -R <owner>/slext < ~/.ssh/slext_deploy
+gh secret set SSH_HOST --env production -R <owner>/slext --body "<host>"
+gh secret set SSH_PORT --env production -R <owner>/slext --body "<port>"
+gh secret set SSH_USER --env production -R <owner>/slext --body "<user>"
+gh secret set SSH_KEY  --env production -R <owner>/slext < ~/.ssh/slext_deploy
 ```
+
+Репозиторные секреты не используются. Команде выдавайте роль **write** — тогда они смогут
+работать только через PR.
 
 ## Откат
 

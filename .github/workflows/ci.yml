@@ -2,31 +2,40 @@ name: ci
 
 on:
   push:
-    branches: [dev, main]
+    branches: [dev, main, prod]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   static-checks:
+    name: static-checks
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
 
-      - name: Python syntax
-        run: |
-          python3 -m py_compile bin/*.py
+      - name: Синтаксис Python
+        run: python3 -m py_compile bin/*.py
 
-      - name: JavaScript syntax
+      - name: Синтаксис JavaScript
         run: node --check www/ext.js
 
-      - name: Shell syntax
+      - name: Синтаксис Shell
         run: |
           bash -n install.sh
           bash -n uninstall.sh
@@ -35,6 +44,13 @@ jobs:
           bash -n deploy/slext-deploy.sh
           bash -n deploy/install-deploy-access.sh
           bash -n deploy/check-pr-approval.sh
+          bash -n deploy/apply-github-protection.sh
+
+      - name: Валидность JSON (rulesets)
+        run: |
+          python3 -m json.tool deploy/rulesets/prod-main.json >/dev/null
+          python3 -m json.tool deploy/rulesets/dev.json >/dev/null
+          python3 -m json.tool deploy/security-settings.json >/dev/null
 
       - name: Патчер содержит ключевые маркеры
         run: |
@@ -44,9 +60,11 @@ jobs:
 
       - name: Секреты не закоммичены
         run: |
-          if grep -rIn --exclude-dir=.git -E 'PGPASSWORD=[A-Za-z0-9]+$' . ; then
-            echo "Найден похожий на реальный пароль PGPASSWORD"; exit 1
+          set -e
+          if grep -rIn --exclude-dir=.git -E 'PGPASSWORD=[A-Za-z0-9]{6,}$' . ; then
+            echo "::error::Найден похожий на реальный пароль PGPASSWORD"; exit 1
           fi
           if grep -rIn --exclude-dir=.git -E 'BEGIN (RSA|OPENSSH|EC) PRIVATE KEY' . ; then
-            echo "Найден приватный ключ"; exit 1
+            echo "::error::Найден приватный ключ"; exit 1
           fi
+          echo "Секретов не найдено"

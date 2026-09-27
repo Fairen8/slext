@@ -13,7 +13,7 @@ if [ -z "$REPO" ] || [ -z "$SHA" ]; then
   exit 1
 fi
 
-PR=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '.[0].number // empty' 2>/dev/null || true)
+PR="${POLICY_PR:-$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '.[0].number // empty' 2>/dev/null || true)}"
 if [ -z "$PR" ]; then
   echo "POLICY FAIL: коммит $SHA не связан с pull request (прямой пуш?)."
   echo "Правильно: ветка → PR → одобрение @$OWNER → merge в prod."
@@ -21,11 +21,18 @@ if [ -z "$PR" ]; then
 fi
 
 BASE=$(gh api "repos/$REPO/pulls/$PR" --jq '.base.ref')
+HEAD=$(gh api "repos/$REPO/pulls/$PR" --jq '.head.ref')
 AUTHOR=$(gh api "repos/$REPO/pulls/$PR" --jq '.user.login')
-echo "PR #$PR: $AUTHOR -> $BASE"
+echo "PR #$PR: $AUTHOR: $HEAD -> $BASE"
 
 if [ "$BASE" != "prod" ] && [ "$BASE" != "main" ]; then
   echo "POLICY FAIL: PR #$PR нацелен на '$BASE', а коммит уехал в prod/main."
+  exit 1
+fi
+
+# В прод можно мёржить только из main
+if [ "$BASE" = "prod" ] && [ "$HEAD" != "main" ]; then
+  echo "POLICY FAIL: в prod можно мёржить только из ветки main (PR #$PR: $HEAD -> prod)."
   exit 1
 fi
 

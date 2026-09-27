@@ -18,19 +18,25 @@ if ! docker exec safeline-mgt grep -q slext-injected /app/static/index.html; the
   rm -f /tmp/slext-index.html /tmp/slext-index-patched.html
   echo "slext-injection-applied"
 fi
-docker exec safeline-mgt sed -i -E 's|href="/ext/ext\.css(\?v=[0-9]+)?"|href="/ext/ext.css?v=39"|; s|src="/ext/ext\.js(\?v=[0-9]+)?" defer|src="/ext/ext.js?v=39" defer|' /app/static/index.html || true
+docker exec safeline-mgt sed -i -E 's|href="/ext/ext\.css(\?v=[0-9]+)?"|href="/ext/ext.css?v=41"|; s|src="/ext/ext\.js(\?v=[0-9]+)?" defer|src="/ext/ext.js?v=41" defer|' /app/static/index.html || true
 
-if ! docker exec safeline-mgt grep -q 'slext-extapi' /etc/nginx/conf.d/default.conf; then
-  GW=$(docker network inspect safeline-ce -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null)
-  [ -z "$GW" ] && GW=192.168.0.1
-  docker exec safeline-mgt cat /etc/nginx/conf.d/default.conf > /tmp/slext-def.conf
-  if python3 /opt/slext/bin/patch_mgt_extapi.py /tmp/slext-def.conf /tmp/slext-def-patched.conf "$GW"; then
-    docker cp /tmp/slext-def-patched.conf safeline-mgt:/etc/nginx/conf.d/default.conf
-    docker exec safeline-mgt nginx -t >/dev/null 2>&1 && docker exec safeline-mgt nginx -s reload || true
-    echo "slext-extapi-applied (gw=$GW)"
-  fi
-  rm -f /tmp/slext-def.conf /tmp/slext-def-patched.conf
+GW=$(docker network inspect safeline-ce -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null)
+[ -z "$GW" ] && GW=192.168.0.1
+
+# Разрешаем контейнеру панели ходить в API на docker-мосту (идемпотентно).
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q 'Status: active'; then
+  SUBNET="$(echo "$GW" | cut -d. -f1-3).0/24"
+  ufw allow from "$SUBNET" to any port 8787 proto tcp >/dev/null 2>&1 || true
 fi
+
+docker exec safeline-mgt cat /etc/nginx/conf.d/default.conf > /tmp/slext-def.conf
+OUT=$(python3 /opt/slext/bin/patch_mgt_extapi.py /tmp/slext-def.conf /tmp/slext-def-patched.conf "$GW" 2>&1 || true)
+if [ "$OUT" = "changed" ]; then
+  docker cp /tmp/slext-def-patched.conf safeline-mgt:/etc/nginx/conf.d/default.conf
+  docker exec safeline-mgt nginx -t >/dev/null 2>&1 && docker exec safeline-mgt nginx -s reload || true
+  echo "slext-extapi-applied (gw=$GW)"
+fi
+rm -f /tmp/slext-def.conf /tmp/slext-def-patched.conf
 
 LOGCONF=/data/safeline/resources/nginx/conf.d/zz_slext_access_log.conf
 if [ ! -f "$LOGCONF" ]; then
