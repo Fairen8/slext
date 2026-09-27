@@ -651,3 +651,18 @@ html.slext-dark .sl-warn b { color: #ffd782; }
   #sl-toast { left: 12px; right: 12px; bottom: 16px; text-align: center; }
 }
 
+
+/* --- модалка SLExt (диалог создания пользователя) --- */
+.sl-overlay {
+  position: fixed; inset: 0; z-index: 10000;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex; align-items: center; justify-content: center;
+}
+.sl-modal {
+  background: var(--sl-paper); color: var(--sl-text);
+  border-radius: var(--sl-radius); box-shadow: var(--sl-shadow);
+  padding: 18px 18px 14px; width: min(440px, 92vw);
+}
+.sl-modal-title { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+.sl-modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+.sl-modal .sl-input { flex: 1 1 0; min-width: 0; }

@@ -2,7 +2,7 @@
   'use strict';
 
   var API = location.origin + '/extapi';
-  var EXTVER = '41';
+  var EXTVER = '42';
 
   function tok() {
     try { return localStorage.getItem('safeline_auth') || ''; } catch (e) { return ''; }
@@ -2211,7 +2211,7 @@
       '<input class="sl-input" id="sl-acc-new-name" placeholder="логин (3-64)">' +
       '<input class="sl-input" id="sl-acc-new-pass" type="password" placeholder="пароль (мин. 8)">' +
       '<button class="sl-btn sl-btn-pri" id="sl-acc-add">Создать</button></div>' +
-      '<div class="sl-warn" style="margin:6px 0"><b>Важно:</b> SafeLine CE не умеет ограничивать доступ к самой панели (это Pro-функция), поэтому созданный пользователь получит полный доступ к интерфейсу SafeLine. Создавайте учётки только доверенным людям, а ограничения (разделы SLExt и домены) выдавайте в матрице ниже.</div>' +
+      '<div class="sl-warn" style="margin:6px 0"><b>Важно:</b> SafeLine CE не умеет ограничивать доступ к самой панели (это Pro-функция), поэтому созданный пользователь получит полный доступ к интерфейсу SafeLine. Создавайте учётки только доверенным людям, а ограничения (разделы SLExt и домены) выдавайте в матрице ниже. Нативная кнопка <b>ADD USER</b> в разделе Users открывает эту же форму.</div>' +
       '<div id="sl-access-list"><div class="sl-hint">Загрузка…</div></div></div>');
     host.appendChild(card);
     card.addEventListener('change', function (e) {
@@ -2520,6 +2520,81 @@
     if (b && b.classList && !b.classList.contains('sl-nopro')) b.classList.add('sl-nopro');
   }
 
+  /* -------------------------- add user (native hook) -------------------------- */
+
+  function addUserBtnOf(node) {
+    var b = node && node.closest ? node.closest('button,[role=button],a') : null;
+    if (!b) return null;
+    if (b.id === 'sl-acc-add' || (b.closest && b.closest('#sl-app'))) return null;
+    var t = (b.textContent || '').trim().toUpperCase().replace(/\s+/g, ' ');
+    if (t !== 'ADD USER' && t !== 'ДОБАВИТЬ ПОЛЬЗОВАТЕЛЯ' && t !== '添加用户') return null;
+    return b;
+  }
+
+  function swallowAddUserClick(e) {
+    if (location.pathname.indexOf('/system') !== 0) return;
+    var b = addUserBtnOf(e.target);
+    if (!b) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+    openAddUserDialog();
+  }
+
+  function closeAddUserDialog() {
+    var ov = document.getElementById('sl-umodal');
+    if (ov) ov.remove();
+  }
+
+  function openAddUserDialog() {
+    closeAddUserDialog();
+    var ov = el('<div id="sl-umodal" class="sl-overlay">' +
+      '<div class="sl-modal">' +
+      '<div class="sl-modal-title">Создать пользователя панели <span class="sl-badge">SLExt</span></div>' +
+      '<div class="sl-hint">Логин: 3–64 символа (латиница, цифры, . _ -). Пароль: минимум 8 символов. ' +
+      'Нативная кнопка ADD USER требует Pro-лицензию — учётная запись создаётся кодом SLExt.</div>' +
+      '<div class="sl-row" style="margin-top:10px">' +
+      '<input class="sl-input" id="sl-umodal-name" placeholder="логин" autocomplete="off">' +
+      '<input class="sl-input" id="sl-umodal-pass" type="password" placeholder="пароль" autocomplete="new-password"></div>' +
+      '<div class="sl-err" id="sl-umodal-err" style="display:none;margin-top:8px"></div>' +
+      '<div class="sl-modal-actions">' +
+      '<button class="sl-btn" id="sl-umodal-cancel">Отмена</button>' +
+      '<button class="sl-btn sl-btn-pri" id="sl-umodal-ok">Создать</button></div>' +
+      '</div></div>');
+    document.body.appendChild(ov);
+    var err = function (m) {
+      var e2 = document.getElementById('sl-umodal-err');
+      if (e2) { e2.style.display = ''; e2.textContent = m; }
+    };
+    var submit = function () {
+      var nm = (document.getElementById('sl-umodal-name').value || '').trim();
+      var pw = document.getElementById('sl-umodal-pass').value || '';
+      if (!/^[A-Za-z0-9._-]{3,64}$/.test(nm)) { err('Логин: 3–64 символа (латиница, цифры, . _ -)'); return; }
+      if (pw.length < 8) { err('Пароль: минимум 8 символов'); return; }
+      var ok = document.getElementById('sl-umodal-ok');
+      if (ok) ok.disabled = true;
+      api('/api/access/user', { method: 'POST', body: { username: nm, password: pw } }).then(function (r) {
+        if (ok) ok.disabled = false;
+        if (!r || !r.ok) { err('Ошибка: ' + ((r && r.error) || 'не удалось создать')); return; }
+        toast('Пользователь «' + nm + '» создан — страница обновится');
+        closeAddUserDialog();
+        setTimeout(function () { location.reload(); }, 800);
+      });
+    };
+    ov.addEventListener('click', function (e) {
+      if (e.target === ov || e.target.id === 'sl-umodal-cancel') { closeAddUserDialog(); return; }
+      if (e.target.id === 'sl-umodal-ok') submit();
+    });
+    ov.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closeAddUserDialog();
+      else if (e.key === 'Enter') { e.preventDefault(); submit(); }
+    });
+    setTimeout(function () {
+      var ni = document.getElementById('sl-umodal-name');
+      if (ni) ni.focus();
+    }, 30);
+  }
+
   /* ------------------------------ routing ------------------------------ */
 
   function hideStockSections() {
@@ -2623,6 +2698,7 @@
   setInterval(versionCheck, 120000);
   document.addEventListener('mousedown', swallowUpstreamClick, true);
   document.addEventListener('click', swallowUpstreamClick, true);
+  document.addEventListener('click', swallowAddUserClick, true);
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function () { setInterval(route, 1500); route(); startObserver(); });
   } else {
