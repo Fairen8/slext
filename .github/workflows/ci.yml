@@ -32,6 +32,9 @@ jobs:
           bash -n uninstall.sh
           bash -n bin/apply-injection.sh
           bash -n tests/verify-install.sh
+          bash -n deploy/slext-deploy.sh
+          bash -n deploy/install-deploy-access.sh
+          bash -n deploy/check-pr-approval.sh
 
       - name: Патчер содержит ключевые маркеры
         run: |

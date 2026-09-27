@@ -1,15 +1,41 @@
 # CI/CD: деплой на сервер из GitHub
 
-## Ветки и защита
+## Ветки и правила
 
-| Ветка | Назначение | Правила (branch protection) |
+| Ветка | Назначение | Правила |
 |---|---|---|
-| `dev` | рабочая интеграция | PR с 1 одобрением, обязательные проверки CI, force-push запрещён |
-| `prod` | **деплой** | PR **только с одобрением владельца** (code owner @Fairen8), проверки CI, squash/linear, force-push запрещён |
+| `dev` | рабочая интеграция | PR + 1 одобрение, проверки CI |
+| `prod` | **деплой** | PR **только с одобрением владельца (@Fairen8)**, проверки CI |
 | `main` | стабильная история | как `prod` |
+| `feature/*`, `fix/*`, `docs/*` | рабочие ветки | от `dev`, живут до мержа |
 
-Напрямую пушить нельзя ни в одну из веток — только через pull request
-(администратор может обойти правило при необходимости).
+### Как это контролируется
+
+**Важно:** на GitHub Free для приватных репозиториев нативные branch protection / rulesets /
+environment-approvals недоступны (403 «Upgrade to GitHub Pro»). Поэтому защита реализована
+на стороне CI и работает без платного плана:
+
+1. **deploy.yml, job `policy`** — перед выкаткой проверяет, что пуш в `prod` является
+   результатом pull request, одобренного владельцем (`deploy/check-pr-approval.sh`).
+   Нет PR или нет одобрения → деплой не запускается.
+2. **branch-guard.yml** — на каждый пуш в `prod`/`main` повторяет проверку; при нарушении
+   создаёт issue и красит workflow.
+3. **CODEOWNERS** (`* @Fairen8`) — GitHub автоматически запрашивает ревью владельца в PR.
+
+Ручной запуск деплоя (Actions → deploy → Run workflow) policy не проверяет — это осознанный
+путь для владельца.
+
+### Если появится GitHub Pro (рекомендуется)
+
+В репозитории лежат готовые rulesets — включаются двумя командами:
+
+```bash
+gh api -X POST repos/Fairen8/slext/rulesets --input deploy/rulesets/prod-main.json
+gh api -X POST repos/Fairen8/slext/rulesets --input deploy/rulesets/dev.json
+```
+
+Это включит нативные блокировки: запрет force-push и удаления, обязательные проверки CI,
+обязательное ревью (для `prod`/`main` — с требованием code owner).
 
 ## Как выкатить новую версию
 
@@ -22,10 +48,11 @@ gh pr create --base prod --head dev    # PR в prod → одобрение вл�
 
 После мержа в `prod` автоматически запускается `.github/workflows/deploy.yml`:
 
-1. **Проверки** — синтаксис Python/JS/Shell.
-2. **Выгрузка** — tar-over-ssh в `/tmp/slext-stage`.
-3. **Применение** — `sudo -n /usr/local/bin/slext-deploy`: новая версия в `/opt/slext.new`,
-   сохранение `slext.env`/`state.json`, бэкап `/opt/slext.old`, патчи, restart API, health-check.
+1. **policy** — проверка PR и одобрения владельца.
+2. **checks** — синтаксис Python/JS/Shell.
+3. **deploy** — tar-over-ssh в `/tmp/slext-stage` → `sudo -n /usr/local/bin/slext-deploy`
+   (новая версия в `/opt/slext.new`, сохранение `slext.env`/`state.json`, бэкап `/opt/slext.old`,
+   патчи, restart API, health-check).
 
 Ручной запуск: GitHub → Actions → **deploy** → *Run workflow*.
 
