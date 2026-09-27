@@ -15,32 +15,36 @@ permissions:
 
 jobs:
   policy:
+    name: policy
     if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Проверка процесса (PR + одобрение владельца)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
           OWNER: Fairen8
         run: bash deploy/check-pr-approval.sh
 
   checks:
+    name: checks
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
 
-      - name: Синтаксис Python/JS/Shell
+      - name: Синтаксис
         run: |
           python3 -m py_compile bin/*.py
           node --check www/ext.js
@@ -52,14 +56,17 @@ jobs:
           bash -n deploy/check-pr-approval.sh
 
   deploy:
+    name: deploy
     needs: [policy, checks]
     if: >
       always() &&
       needs.checks.result == 'success' &&
       (needs.policy.result == 'success' || needs.policy.result == 'skipped')
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Настройка SSH
         run: |

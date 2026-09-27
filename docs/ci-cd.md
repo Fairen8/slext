@@ -11,31 +11,33 @@
 
 ### Как это контролируется
 
-**Важно:** на GitHub Free для приватных репозиториев нативные branch protection / rulesets /
-environment-approvals недоступны (403 «Upgrade to GitHub Pro»). Поэтому защита реализована
-на стороне CI и работает без платного плана:
+Два уровня защиты:
 
-1. **deploy.yml, job `policy`** — перед выкаткой проверяет, что пуш в `prod` является
-   результатом pull request, одобренного владельцем (`deploy/check-pr-approval.sh`).
-   Нет PR или нет одобрения → деплой не запускается.
-2. **branch-guard.yml** — на каждый пуш в `prod`/`main` повторяет проверку; при нарушении
-   создаёт issue и красит workflow.
-3. **CODEOWNERS** (`* @Fairen8`) — GitHub автоматически запрашивает ревью владельца в PR.
+1. **Нативные rulesets GitHub** (работают в публичном репозитории, а в приватном — только
+   с GitHub Pro). Включаются один раз:
+
+   ```bash
+   bash deploy/apply-github-protection.sh
+   ```
+
+   Что настраивается:
+   - `dev`: PR + 1 одобрение, обязательные проверки CI, запрет force-push и удаления;
+   - `prod` и `main`: PR **только с одобрением владельца** (code owner из `CODEOWNERS`),
+     обязательные проверки, linear history, запрет force-push и удаления;
+   - владелец (текущий `gh`-пользователь) получает bypass — команда не может.
+
+2. **CI-контроль (работает всегда):**
+   - `deploy.yml` → job `policy` — перед выкаткой проверяет, что пуш в `prod` является
+     результатом PR, одобренного владельцем (`deploy/check-pr-approval.sh`). Нет PR или
+     нет одобрения → деплой не запускается.
+   - `branch-guard.yml` — на каждый пуш в `prod`/`main` повторяет проверку; при нарушении
+     создаёт issue и красит workflow.
 
 Ручной запуск деплоя (Actions → deploy → Run workflow) policy не проверяет — это осознанный
 путь для владельца.
 
-### Если появится GitHub Pro (рекомендуется)
-
-В репозитории лежат готовые rulesets — включаются двумя командами:
-
-```bash
-gh api -X POST repos/Fairen8/slext/rulesets --input deploy/rulesets/prod-main.json
-gh api -X POST repos/Fairen8/slext/rulesets --input deploy/rulesets/dev.json
-```
-
-Это включит нативные блокировки: запрет force-push и удаления, обязательные проверки CI,
-обязательное ревью (для `prod`/`main` — с требованием code owner).
+Дополнительно скрипт включает **secret scanning + push protection** и Dependabot-алерты
+(для публичных репозиториев бесплатно).
 
 ## Как выкатить новую версию
 
