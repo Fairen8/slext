@@ -2,7 +2,7 @@
   'use strict';
 
   var API = location.origin + '/extapi';
-  var EXTVER = '42';
+  var EXTVER = '43';
 
   function tok() {
     try { return localStorage.getItem('safeline_auth') || ''; } catch (e) { return ''; }
@@ -2595,6 +2595,132 @@
     }, 30);
   }
 
+  /* ------------------------ edit user (native hook) ------------------------ */
+
+  function usersRowOf(node) {
+    var tr = node && node.closest ? node.closest('tr') : null;
+    if (!tr) return null;
+    var tbl = tr.closest('table');
+    if (!tbl) return null;
+    var head = tbl.querySelector('thead');
+    if (!head) return null;
+    var ht = (head.textContent || '').toUpperCase();
+    if (ht.indexOf('2FA') === -1 && ht.indexOf('LAST LOGIN') === -1) return null;
+    var td = node.closest('td');
+    if (!td || td !== tr.lastElementChild) return null;
+    var first = tr.firstElementChild;
+    if (!first) return null;
+    var u = (first.innerText || '').trim().split('\n')[0].trim();
+    return u || null;
+  }
+
+  function swallowUserEditClick(e) {
+    if (location.pathname.indexOf('/system') !== 0) return;
+    var u = usersRowOf(e.target);
+    if (!u) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+    openUserEditor(u);
+  }
+
+  function closeUserEditor() {
+    var ov = document.getElementById('sl-uedit');
+    if (ov) ov.remove();
+  }
+
+  function openUserEditor(username) {
+    closeUserEditor();
+    api('/api/access').then(function (d) {
+      if (!d || !d.ok) { toast('SLExt: не удалось получить права', true); return; }
+      var u = null;
+      (d.users || []).forEach(function (x) { if (x.username === username) u = x; });
+      if (!u) u = { username: username, role: 'admin', perms: [], domains: [], configured: false };
+      var labels = d.role_labels || {};
+      var roleSel = ['admin', 'operator', 'viewer', 'custom'].map(function (r) {
+        return '<option value="' + r + '"' + (u.role === r ? ' selected' : '') + '>' + esc(labels[r] || r) + '</option>';
+      }).join('');
+      var permDefs = (d.perms || []).filter(function (p) { return p.key !== 'access.manage'; });
+      var permsHtml = permDefs.map(function (p) {
+        var on = (u.perms || []).indexOf(p.key) >= 0;
+        return '<label class="sl-perm"><input type="checkbox" data-uedit-perm="' + p.key + '"' + (on ? ' checked' : '') + '> ' + esc(p.label) + '</label>';
+      }).join('');
+      var hosts = d.hosts || [];
+      var ov = el('<div id="sl-uedit" class="sl-overlay">' +
+        '<div class="sl-modal" style="width:min(640px,94vw)">' +
+        '<div class="sl-modal-title">Настройка доступа — «' + esc(username) + '» <span class="sl-badge">SLExt</span></div>' +
+        (u.configured ? '' : '<div class="sl-hint" style="margin-bottom:6px">Пользователь ещё не настроен — сейчас у него полный доступ.</div>') +
+        '<div class="sl-row"><label>Роль</label><select class="sl-input" id="sl-uedit-role">' + roleSel + '</select></div>' +
+        '<div class="sl-perms" id="sl-uedit-perms" style="' + (u.role === 'custom' ? '' : 'display:none') + '">' +
+        '<div class="sl-hint">Права для настраиваемой роли:</div>' + permsHtml + '</div>' +
+        '<div class="sl-row"><label>Домены (через запятую, пусто — все)</label>' +
+        '<input class="sl-input sl-wide" id="sl-uedit-domains" list="sl-uedit-hosts" value="' + esc((u.domains || []).join(', ')) + '"></div>' +
+        '<datalist id="sl-uedit-hosts">' + hosts.map(function (h) { return '<option value="' + esc(h) + '">'; }).join('') + '</datalist>' +
+        '<div class="sl-row"><label>Новый пароль (пусто — не менять)</label>' +
+        '<input class="sl-input" id="sl-uedit-pass" type="password" autocomplete="new-password" placeholder="мин. 8 символов"></div>' +
+        '<div class="sl-err" id="sl-uedit-err" style="display:none;margin-top:8px"></div>' +
+        '<div class="sl-modal-actions">' +
+        (username === 'admin' ? '' : '<button class="sl-btn sl-btn-x" id="sl-uedit-del" style="margin-right:auto">Удалить</button>') +
+        '<button class="sl-btn" id="sl-uedit-cancel">Отмена</button>' +
+        '<button class="sl-btn sl-btn-pri" id="sl-uedit-save">Сохранить</button></div>' +
+        '</div></div>');
+      document.body.appendChild(ov);
+      var err = function (m) {
+        var e2 = document.getElementById('sl-uedit-err');
+        if (e2) { e2.style.display = ''; e2.textContent = m; }
+      };
+      var done = function (msg) {
+        toast(msg);
+        closeUserEditor();
+        removeSection('sl-access-sec');
+        setTimeout(function () { renderAccessSettings(); }, 300);
+      };
+      var save = function () {
+        err('');
+        var role = document.getElementById('sl-uedit-role').value;
+        var domains = (document.getElementById('sl-uedit-domains').value || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+        var perms = [];
+        if (role === 'custom') {
+          ov.querySelectorAll('[data-uedit-perm]').forEach(function (c) { if (c.checked) perms.push(c.getAttribute('data-uedit-perm')); });
+        }
+        var pw = document.getElementById('sl-uedit-pass').value || '';
+        if (pw && pw.length < 8) { err('Пароль: минимум 8 символов'); return; }
+        var btn = document.getElementById('sl-uedit-save');
+        if (btn) btn.disabled = true;
+        api('/api/access/save', { method: 'POST', body: { username: username, role: role, perms: perms, domains: domains } })
+          .then(function (r) {
+            if (!r || !r.ok) { if (btn) btn.disabled = false; err('Ошибка: ' + ((r && r.error) || 'не сохранилось')); return; }
+            if (!pw) { done('Доступ «' + username + '» сохранён'); return; }
+            api('/api/access/user/password', { method: 'POST', body: { username: username, password: pw } })
+              .then(function (r2) {
+                if (!r2 || !r2.ok) { if (btn) btn.disabled = false; err('Доступ сохранён, но пароль не изменён: ' + ((r2 && r2.error) || '')); return; }
+                done('Доступ и пароль «' + username + '» обновлены');
+              });
+          });
+      };
+      ov.addEventListener('change', function (e) {
+        if (e.target && e.target.id === 'sl-uedit-role') {
+          var box = document.getElementById('sl-uedit-perms');
+          if (box) box.style.display = e.target.value === 'custom' ? '' : 'none';
+        }
+      });
+      ov.addEventListener('click', function (e) {
+        if (e.target === ov || e.target.id === 'sl-uedit-cancel') { closeUserEditor(); return; }
+        if (e.target.id === 'sl-uedit-save') { save(); return; }
+        if (e.target.id === 'sl-uedit-del') {
+          if (!window.confirm('Удалить пользователя «' + username + '»?')) return;
+          api('/api/access/user/delete', { method: 'POST', body: { username: username } }).then(function (r) {
+            if (!r || !r.ok) { err('Ошибка: ' + ((r && r.error) || 'не удалилось')); return; }
+            done('Пользователь «' + username + '» удалён');
+          });
+        }
+      });
+      ov.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') closeUserEditor();
+      });
+    });
+  }
+
   /* ------------------------------ routing ------------------------------ */
 
   function hideStockSections() {
@@ -2699,6 +2825,7 @@
   document.addEventListener('mousedown', swallowUpstreamClick, true);
   document.addEventListener('click', swallowUpstreamClick, true);
   document.addEventListener('click', swallowAddUserClick, true);
+  document.addEventListener('click', swallowUserEditClick, true);
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function () { setInterval(route, 1500); route(); startObserver(); });
   } else {
