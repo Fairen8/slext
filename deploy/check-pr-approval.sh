@@ -21,11 +21,18 @@ if [ -z "$PR" ]; then
 fi
 
 BASE=$(gh api "repos/$REPO/pulls/$PR" --jq '.base.ref')
+HEAD=$(gh api "repos/$REPO/pulls/$PR" --jq '.head.ref')
 AUTHOR=$(gh api "repos/$REPO/pulls/$PR" --jq '.user.login')
-echo "PR #$PR: $AUTHOR -> $BASE"
+echo "PR #$PR: $AUTHOR: $HEAD -> $BASE"
 
 if [ "$BASE" != "prod" ] && [ "$BASE" != "main" ]; then
   echo "POLICY FAIL: PR #$PR нацелен на '$BASE', а коммит уехал в prod/main."
+  exit 1
+fi
+
+# В прод можно мёржить только из main
+if [ "$BASE" = "prod" ] && [ "$HEAD" != "main" ]; then
+  echo "POLICY FAIL: в prod можно мёржить только из ветки main (PR #$PR: $HEAD -> prod)."
   exit 1
 fi
 
