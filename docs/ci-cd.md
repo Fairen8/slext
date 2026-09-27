@@ -80,23 +80,20 @@ ssh-copy-id -i ~/.ssh/slext_deploy.pub -p <SSH_PORT> <SSH_USER>@<SSH_HOST>
 
 ### 3. Секреты GitHub
 
-В репозитории → Settings → Secrets and variables → Actions добавить:
-
-| Секрет | Значение |
-|---|---|
-| `SSH_HOST` | адрес сервера |
-| `SSH_PORT` | порт SSH |
-| `SSH_USER` | пользователь (например, `fairen8`) |
-| `SSH_KEY` | приватный ключ деплоя (`~/.ssh/slext_deploy`, целиком) |
-
-Через `gh`:
+SSH-доступ деплоя хранится **на уровне окружения `production`** (не репозитория), чтобы его
+нельзя было получить из произвольных workflow/веток. Значения секретов не отображаются никому;
+после публикации репозитория на окружении включается **обязательное подтверждение владельца** —
+без approve деплой (и секреты) недоступны.
 
 ```bash
-gh secret set SSH_HOST -R <owner>/slext --body "<host>"
-gh secret set SSH_PORT -R <owner>/slext --body "<port>"
-gh secret set SSH_USER -R <owner>/slext --body "<user>"
-gh secret set SSH_KEY  -R <owner>/slext < ~/.ssh/slext_deploy
+gh secret set SSH_HOST --env production -R <owner>/slext --body "<host>"
+gh secret set SSH_PORT --env production -R <owner>/slext --body "<port>"
+gh secret set SSH_USER --env production -R <owner>/slext --body "<user>"
+gh secret set SSH_KEY  --env production -R <owner>/slext < ~/.ssh/slext_deploy
 ```
+
+Репозиторные секреты не используются. Команде выдавайте роль **write** — тогда они смогут
+работать только через PR.
 
 ## Откат
 

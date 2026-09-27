@@ -25,20 +25,36 @@ PY
   rm -f "$tmp"
 }
 
-echo "[1/4] Rulesets..."
+echo "[1/5] Rulesets..."
 apply_ruleset prod-main.json
 apply_ruleset dev.json
 
-echo "[2/4] Secret scanning + push protection..."
+echo "[2/5] Окружение production: деплой только после подтверждения владельца"
+ENV_TMP="$(mktemp)"
+cat > "$ENV_TMP" <<JSON
+{
+  "wait_timer": 0,
+  "reviewers": [ { "type": "User", "id": $OWNER_ID } ],
+  "deployment_branch_policy": null
+}
+JSON
+gh api -X PUT "repos/$REPO/environments/production" --input "$ENV_TMP" >/dev/null \
+  && echo "  + reviewers: владелец" \
+  || echo "  пропущено (нужен публичный репозиторий или GitHub Pro)"
+rm -f "$ENV_TMP"
+
+echo "[3/5] Secret scanning + push protection..."
 gh api -X PATCH "repos/$REPO" --input "$SRC/security-settings.json" >/dev/null || \
   echo "  пропущено (недоступно на текущем плане)"
 
-echo "[3/4] Dependabot alerts..."
+echo "[4/5] Dependabot alerts..."
 gh api -X PUT "repos/$REPO/vulnerability-alerts" >/dev/null 2>&1 || true
 
-echo "[4/4] Автоматические security-фиксы..."
+echo "[5/5] Автоматические security-фиксы..."
 gh api -X PUT "repos/$REPO/automated-security-fixes" >/dev/null 2>&1 || true
 
 echo
 echo "Готово. Текущие rulesets:"
 gh api "repos/$REPO/rulesets" --jq '.[] | "  #\(.id) \(.name) (\(.enforcement))"'
+echo "Текущие окружения:"
+gh api "repos/$REPO/environments" --jq '.environments[] | "  \(.name)"'
