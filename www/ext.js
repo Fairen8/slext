@@ -2,7 +2,7 @@
   'use strict';
 
   var API = location.origin + '/extapi';
-  var EXTVER = '39';
+  var EXTVER = '40';
 
   function tok() {
     try { return localStorage.getItem('safeline_auth') || ''; } catch (e) { return ''; }
@@ -145,15 +145,13 @@
     ['lt', 'Тест ёмкости'],
     ['pages', 'Страницы'],
     ['sec', 'Безопасность'],
-    ['notify', 'Уведомления'],
-    ['access', 'Доступ']
+    ['notify', 'Уведомления']
   ];
   var SL_TAB = 'overview';
   var SL_ME = null;
   var TAB_PERM = {
     overview: 'overview.view', proxy: 'proxy.view', dns: 'dns.view', wr: 'wr.view',
-    lt: 'lt.view', pages: 'pages.view', sec: 'skip.view', notify: 'notify.view',
-    access: 'access.manage'
+    lt: 'lt.view', pages: 'pages.view', sec: 'skip.view', notify: 'notify.view'
   };
 
   function can(p) {
@@ -352,7 +350,6 @@
     else if (SL_TAB === 'pages') { renderPageCard(host); }
     else if (SL_TAB === 'sec') { renderSkipCard(host); renderGeoCard(host); }
     else if (SL_TAB === 'notify') { renderNotifyCard(null, null, host); }
-    else if (SL_TAB === 'access') { renderAccessCard(host); }
   }
 
   function refreshWrCard() {
@@ -2175,6 +2172,36 @@
 
   /* ------------------------------ access matrix ------------------------------ */
 
+  function accessSettingsHost() {
+    var w = document.getElementById('sl-access-wrap');
+    if (w && document.body.contains(w)) return w;
+    var header = findByTextDeep(document, 'management', '#sl-app,#sl-access-sec');
+    var host = null, before = null;
+    if (header && header.parentElement && header.parentElement.parentElement) {
+      var group = header.parentElement;
+      host = group.parentElement;
+      before = group.nextSibling;
+    }
+    if (!host) {
+      var sc = document.querySelector('div[style*="overflow-y"]');
+      host = (sc && sc.children.length) ? sc.children[sc.children.length - 1] : document.body;
+    }
+    w = el('<div id="sl-access-wrap"></div>');
+    if (before && before.parentNode === host) host.insertBefore(w, before);
+    else host.appendChild(w);
+    return w;
+  }
+
+  function renderAccessSettings() {
+    if (location.pathname.indexOf('/system') !== 0 || !can('access.manage')) {
+      removeSection('sl-access-sec');
+      return;
+    }
+    if (document.getElementById('sl-access-sec')) return;
+    var host = accessSettingsHost();
+    if (host) renderAccessCard(host);
+  }
+
   function renderAccessCard(host) {
     if (document.getElementById('sl-access-sec') || !host) return;
     var card = el('<div class="sl-card" id="sl-access-sec">' +
@@ -2203,7 +2230,7 @@
       api('/api/access/save', { method: 'POST', body: { username: u, role: role, perms: perms, domains: domains } })
         .then(function (r) {
           toast(r.ok ? ('Доступ «' + u + '» сохранён') : ('Ошибка: ' + (r.error || '')), !r.ok);
-          if (r.ok) { removeSection('sl-access-sec'); renderWorkspaceTab(); }
+          if (r.ok) { removeSection('sl-access-sec'); renderAccessSettings(); }
         });
     });
     api('/api/access').then(function (d) {
@@ -2531,6 +2558,7 @@
     if (path.indexOf('/attact_events') === 0) renderLogExport(document);
     else removeSection('sl-log-export');
     fixDashError(document);
+    renderAccessSettings();
     if (slWorkOpen()) {
       renderWorkspaceTab();
       if (SL_TAB === 'lt') ltPoll();
