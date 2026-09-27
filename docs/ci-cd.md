@@ -1,27 +1,31 @@
 # CI/CD: деплой на сервер из GitHub
 
-## Ветки
+## Ветки и защита
 
-| Ветка | Назначение |
-|---|---|
-| `dev` | рабочая: сюда идут все изменения, запускается только статический CI |
-| `prod` | **деплой**: push в эту ветку автоматически выкатывает код на сервер |
-| `main` | стабильная история; обновляется вручную (merge из `dev`/`prod`) |
+| Ветка | Назначение | Правила (branch protection) |
+|---|---|---|
+| `dev` | рабочая интеграция | PR с 1 одобрением, обязательные проверки CI, force-push запрещён |
+| `prod` | **деплой** | PR **только с одобрением владельца** (code owner @Fairen8), проверки CI, squash/linear, force-push запрещён |
+| `main` | стабильная история | как `prod` |
+
+Напрямую пушить нельзя ни в одну из веток — только через pull request
+(администратор может обойти правило при необходимости).
 
 ## Как выкатить новую версию
 
 ```bash
-git push origin dev          # изменения
-git push origin dev:prod     # выкатить текущий dev на прод (запустит деплой)
+git push origin feature/my-task        # рабочая ветка
+gh pr create --base dev                # PR в dev (1 одобрение)
+# после мержа в dev:
+gh pr create --base prod --head dev    # PR в prod → одобрение владельца → merge
 ```
 
-Пайплайн `.github/workflows/deploy.yml`:
+После мержа в `prod` автоматически запускается `.github/workflows/deploy.yml`:
 
-1. **Проверки** — синтаксис Python/JS/Shell (сломанный код не уедет на сервер).
-2. **Выгрузка** — `rsync` репозитория на сервер в `/tmp/slext-stage` (по SSH-ключу из секретов).
-3. **Применение** — `sudo -n /usr/local/bin/slext-deploy`: идемпотентно собирает новую версию
-   в `/opt/slext.new`, сохраняет `slext.env` и `state.json`, делает бэкап `/opt/slext.old`,
-   применяет патчи (`apply-injection.sh`), перезапускает API и проверяет `/api/health`.
+1. **Проверки** — синтаксис Python/JS/Shell.
+2. **Выгрузка** — tar-over-ssh в `/tmp/slext-stage`.
+3. **Применение** — `sudo -n /usr/local/bin/slext-deploy`: новая версия в `/opt/slext.new`,
+   сохранение `slext.env`/`state.json`, бэкап `/opt/slext.old`, патчи, restart API, health-check.
 
 Ручной запуск: GitHub → Actions → **deploy** → *Run workflow*.
 

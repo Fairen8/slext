@@ -40,17 +40,13 @@ gh repo clone Fairen8/slext /tmp/slext && cd /tmp/slext && sudo bash install.sh 
 
 ## CI/CD
 
-- `dev` — рабочая ветка (все изменения);
-- **push в `prod` автоматически выкатывает версию на сервер** через GitHub Actions
-  (проверки → rsync → `sudo /usr/local/bin/slext-deploy`: бэкап, патчи, перезапуск, health-check);
-- `main` — стабильная история.
+- `dev` — рабочая ветка (PR + 1 одобрение);
+- **`prod` — деплой: мерж только через PR с одобрением владельца**; после мержа GitHub Actions
+  автоматически выкатывает версию на сервер (проверки → tar-over-ssh → `slext-deploy` с бэкапом);
+- `main` — стабильная история (как `prod`).
 
-```bash
-git push origin dev          # изменения
-git push origin dev:prod     # выкатить на сервер
-```
-
-Настройка и откат — [docs/ci-cd.md](docs/ci-cd.md).
+Правила веток включены на GitHub (branch protection + CODEOWNERS). Настройка, флоу и откат —
+[docs/ci-cd.md](docs/ci-cd.md), правила для команды — [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Документация
 
