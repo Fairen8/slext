@@ -19,15 +19,15 @@ ruleset_id() {
 
 apply_ruleset() {
   local file="$1" tmp name id
-  name="$(python3 -c "import json;print(json.load(open('$SRC/rulesets/$file'))['name'])")"
+  name="$(grep -m1 '"name"' "$SRC/rulesets/$file" | sed -E 's/.*"name" *: *"([^"]+)".*/\1/')"
   id="$(ruleset_id "$name")"
   tmp="$(mktemp)"
-  python3 - "$SRC/rulesets/$file" "$OWNER_ID" > "$tmp" <<'PY'
+  python3 -c "
 import json, sys
-data = json.load(open(sys.argv[1]))
-data['bypass_actors'] = [{"actor_id": int(sys.argv[2]), "actor_type": "User", "bypass_mode": "always"}]
+data = json.load(sys.stdin)
+data['bypass_actors'] = [{'actor_id': int(sys.argv[1]), 'actor_type': 'User', 'bypass_mode': 'always'}]
 json.dump(data, sys.stdout, ensure_ascii=False)
-PY
+" "$OWNER_ID" < "$SRC/rulesets/$file" > "$tmp"
   if [ -n "$id" ]; then
     echo "  ~ $file (обновление #$id)"
     gh api -X PUT "repos/$REPO/rulesets/$id" --input "$tmp" >/dev/null
