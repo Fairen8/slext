@@ -1,5 +1,6 @@
 #!/bin/bash
-# Быстрый контроль работоспособности SLExt: API и цепочка панель → /extapi → API.
+# Быстрый контроль работоспособности SLExt: API, цепочка панель → /extapi → API
+# и валидность конфига tengine (иначе mgt не может менять зал ожидания).
 # При сбое перезапускает сервис и/или переприменяет патчи. Запускается таймером раз в минуту.
 set -u
 
@@ -18,5 +19,14 @@ if [ "$code" != "200" ]; then
   bash /opt/slext/bin/apply-injection.sh >/dev/null 2>&1 || true
 fi
 
-# 3. Итоговая проверка (код возврата виден в journalctl -u slext-watchdog)
+# 3. Конфиг tengine: если nginx -t падает, mgt не сможет включить/выключить
+#    зал ожидания и перегенерировать страницы. Переприменяем патчи (уносят бэкапы
+#    из include-каталогов) и перезагружаем nginx.
+if ! docker exec safeline-tengine nginx -t >/dev/null 2>&1; then
+  bash /opt/slext/bin/apply-injection.sh >/dev/null 2>&1 || true
+  docker exec safeline-tengine nginx -t >/dev/null 2>&1 && \
+    docker exec safeline-tengine nginx -s reload >/dev/null 2>&1 || true
+fi
+
+# 4. Итоговая проверка (код возврата виден в journalctl -u slext-watchdog)
 curl -fsS -m 5 "$API" >/dev/null 2>&1

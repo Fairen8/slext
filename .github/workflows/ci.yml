@@ -62,6 +62,13 @@ jobs:
           grep -q 'slext-gate' bin/patch_site_page.py
           grep -q 'slext-skip' bin/patch_site_page.py
 
+      - name: Бэкапы nginx вне include-каталогов
+        run: |
+          if grep -q '"\$f\.slext-orig"' bin/apply-injection.sh; then
+            echo "::error::Бэкап конфига пишется в sites-enabled — сломает nginx -t и зал ожидания"; exit 1
+          fi
+          grep -q 'slext-backup-moved' bin/apply-injection.sh
+
       - name: Секреты не закоммичены
         run: |
           set -e
