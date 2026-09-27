@@ -46,11 +46,12 @@ jobs:
           chmod 600 ~/.ssh/id
           ssh-keyscan -p "${{ secrets.SSH_PORT }}" -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
 
-      - name: Выгрузка репозитория на сервер (staging)
+      - name: Выгрузка репозитория на сервер (staging, tar-over-ssh)
         run: |
-          rsync -az --delete --exclude .git \
-            -e "ssh -i ~/.ssh/id -p ${{ secrets.SSH_PORT }} -o StrictHostKeyChecking=accept-new" \
-            ./ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/tmp/slext-stage/"
+          tar --exclude=.git -czf - . | \
+            ssh -i ~/.ssh/id -p "${{ secrets.SSH_PORT }}" -o StrictHostKeyChecking=accept-new \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "rm -rf /tmp/slext-stage && mkdir -p /tmp/slext-stage && tar -xzf - -C /tmp/slext-stage"
 
       - name: Применение на сервере (идемпотентно, с бэкапом)
         run: |
