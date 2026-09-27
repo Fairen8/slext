@@ -5,6 +5,7 @@ name: branch-guard
 on:
   push:
     branches: [prod, main]
+  workflow_dispatch:
 
 permissions:
   contents: read
