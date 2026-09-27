@@ -396,7 +396,14 @@ def attack_filters(hours, site, action, atype, risk, sites=None):
     return sc, since, ' AND '.join(where), args
 
 
+ATTACKS_CACHE = {'at': 0, 'key': '', 'data': None}
+
+
 def attacks(hours, site='', action=None, atype=None, risk=None, sites=None):
+    key = '%s|%s|%s|%s|%s|%s' % (hours, site, action, atype, risk, ','.join(sites or []))
+    now = time.time()
+    if ATTACKS_CACHE['data'] is not None and ATTACKS_CACHE['key'] == key and now - ATTACKS_CACHE['at'] < 60:
+        return ATTACKS_CACHE['data']
     sc, since, where, args = attack_filters(hours, site, action, atype, risk, sites=sites)
     prev = since - hours * 3600 * sc
     out = {'hours': hours, 'total': 0, 'prev_total': 0, 'uniq_ips': 0, 'actions': {},
@@ -455,6 +462,7 @@ def attacks(hours, site='', action=None, atype=None, risk=None, sites=None):
                           for k in c.fetchall()]
     except Exception as e:
         out['error'] = str(e)
+    ATTACKS_CACHE.update({'at': now, 'key': key, 'data': out})
     return out
 
 
@@ -2812,6 +2820,7 @@ def user_access(username):
 
 class H(BaseHTTPRequestHandler):
     server_version = 'slext/3.0'
+    timeout = 60
 
     def log_message(self, fmt, *args):
         print('[api] ' + (fmt % args), flush=True)
@@ -3658,6 +3667,7 @@ def skip_apply(enabled):
 
 class S(ThreadingHTTPServer):
     daemon_threads = True
+    request_queue_size = 128
 
     def handle_error(self, request, client_address):
         import sys as _sys
@@ -3679,9 +3689,37 @@ def main():
     threading.Thread(target=backup_worker, daemon=True).start()
     threading.Thread(target=waiting_worker, daemon=True).start()
     threading.Thread(target=dns_worker, daemon=True).start()
-    srv = S(('127.0.0.1', 8787), H)
-    print('[slext] api %s on 127.0.0.1:8787' % VERSION, flush=True)
-    srv.serve_forever()
+
+    # Слушаем 127.0.0.1 и приватные адреса docker-мостов, чтобы панель (контейнер)
+    # могла достать API через /extapi. Публичные адреса не занимаем.
+    addrs = ['127.0.0.1']
+    try:
+        _rc, out, _err = run(['hostname', '-I'], timeout=5)
+        for a in (out or '').split():
+            a = a.strip()
+            if not a:
+                continue
+            try:
+                ip = ipaddress.ip_address(a)
+            except ValueError:
+                continue
+            if ip.version == 4 and ip.is_private and a not in addrs:
+                addrs.append(a)
+    except Exception:
+        pass
+
+    servers = []
+    for a in addrs:
+        try:
+            servers.append((a, S((a, 8787), H)))
+        except OSError:
+            pass
+    if not servers:
+        servers = [('127.0.0.1', S(('127.0.0.1', 8787), H))]
+    print('[slext] api %s on %s' % (VERSION, ', '.join(a for a, _ in servers)), flush=True)
+    for _a, srv in servers[:-1]:
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+    servers[-1][1].serve_forever()
 
 
 if __name__ == '__main__':

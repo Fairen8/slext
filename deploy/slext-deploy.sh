@@ -61,6 +61,7 @@ cp -a /opt/slext/systemd/. /etc/systemd/system/ 2>/dev/null || true
 systemctl daemon-reload || true
 systemctl enable --now slext-api.service 2>/dev/null || true
 systemctl enable --now slext-apply.path slext-apply.timer 2>/dev/null || true
+systemctl enable --now slext-watchdog.timer 2>/dev/null || true
 
 # 6. Применяем патчи и перезапускаем API
 bash /opt/slext/bin/apply-injection.sh
