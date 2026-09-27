@@ -2,7 +2,7 @@
   'use strict';
 
   var API = location.origin + '/extapi';
-  var EXTVER = '40';
+  var EXTVER = '41';
 
   function tok() {
     try { return localStorage.getItem('safeline_auth') || ''; } catch (e) { return ''; }
@@ -2207,6 +2207,11 @@
     var card = el('<div class="sl-card" id="sl-access-sec">' +
       '<div class="sl-card-title">Доступ — матрица прав <span class="sl-badge">SLExt</span></div>' +
       '<div class="sl-hint">Роли: <b>администратор</b> — всё; <b>оператор</b> — просмотр всех разделов + управление залом, бан в CrowdSec, запуск теста, проверка DNS; <b>наблюдатель</b> — только просмотр; <b>настраиваемый</b> — выбранные права. «Домены» ограничивают пользователя только этими сайтами (пусто — все). Пользователи без настройки получают полный доступ.</div>' +
+      '<div class="sl-row"><b>Создать пользователя панели</b>' +
+      '<input class="sl-input" id="sl-acc-new-name" placeholder="логин (3-64)">' +
+      '<input class="sl-input" id="sl-acc-new-pass" type="password" placeholder="пароль (мин. 8)">' +
+      '<button class="sl-btn sl-btn-pri" id="sl-acc-add">Создать</button></div>' +
+      '<div class="sl-warn" style="margin:6px 0"><b>Важно:</b> SafeLine CE не умеет ограничивать доступ к самой панели (это Pro-функция), поэтому созданный пользователь получит полный доступ к интерфейсу SafeLine. Создавайте учётки только доверенным людям, а ограничения (разделы SLExt и домены) выдавайте в матрице ниже.</div>' +
       '<div id="sl-access-list"><div class="sl-hint">Загрузка…</div></div></div>');
     host.appendChild(card);
     card.addEventListener('change', function (e) {
@@ -2218,6 +2223,35 @@
       }
     });
     card.addEventListener('click', function (e) {
+      if (e.target.id === 'sl-acc-add') {
+        var nm = (document.getElementById('sl-acc-new-name').value || '').trim();
+        var pw = document.getElementById('sl-acc-new-pass').value || '';
+        api('/api/access/user', { method: 'POST', body: { username: nm, password: pw } }).then(function (r) {
+          toast(r.ok ? ('Пользователь «' + nm + '» создан') : ('Ошибка: ' + (r.error || '')), !r.ok);
+          if (r.ok) { removeSection('sl-access-sec'); renderAccessSettings(); }
+        });
+        return;
+      }
+      var pwBtn = e.target.closest('[data-acc-pw]');
+      if (pwBtn) {
+        var u2 = pwBtn.getAttribute('data-acc-pw');
+        var np = window.prompt('Новый пароль для «' + u2 + '» (минимум 8 символов):');
+        if (!np) return;
+        api('/api/access/user/password', { method: 'POST', body: { username: u2, password: np } }).then(function (r) {
+          toast(r.ok ? 'Пароль изменён' : ('Ошибка: ' + (r.error || '')), !r.ok);
+        });
+        return;
+      }
+      var delBtn = e.target.closest('[data-acc-del]');
+      if (delBtn) {
+        var u3 = delBtn.getAttribute('data-acc-del');
+        if (!window.confirm('Удалить пользователя «' + u3 + '»?')) return;
+        api('/api/access/user/delete', { method: 'POST', body: { username: u3 } }).then(function (r) {
+          toast(r.ok ? 'Пользователь удалён' : ('Ошибка: ' + (r.error || '')), !r.ok);
+          if (r.ok) { removeSection('sl-access-sec'); renderAccessSettings(); }
+        });
+        return;
+      }
       var sv = e.target.closest('[data-acc-save]');
       if (!sv) return;
       var u = sv.getAttribute('data-acc-save');
@@ -2254,6 +2288,8 @@
           '<label>Домены (через запятую, пусто — все)</label>' +
           '<input class="sl-input sl-wide" data-acc-domains list="sl-acc-hosts" value="' + esc((u.domains || []).join(', ')) + '">' +
           '<button class="sl-btn sl-btn-pri" data-acc-save="' + esc(u.username) + '">Сохранить</button>' +
+          '<button class="sl-btn" data-acc-pw="' + esc(u.username) + '" title="Сменить пароль">Пароль</button>' +
+          (u.username === 'admin' ? '' : '<button class="sl-btn sl-btn-x" data-acc-del="' + esc(u.username) + '" title="Удалить пользователя">Удалить</button>') +
           (u.configured ? '' : '<span class="sl-badge">не настроен — полный доступ</span>') + '</div>' +
           '<div class="sl-perms" data-acc-perms style="' + (u.role === 'custom' ? '' : 'display:none') + '">' +
           '<div class="sl-hint">Права для настраиваемой роли:</div>' + permsHtml + '</div></div>';

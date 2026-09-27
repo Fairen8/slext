@@ -4,11 +4,13 @@ import csv
 import datetime
 import glob
 import gzip
+import hashlib
 import io
 import ipaddress
 import json
 import os
 import re
+import secrets
 import shutil
 import socket
 import ssl
@@ -2785,6 +2787,14 @@ def panel_users():
         return []
 
 
+def user_hash(password):
+    """Парольный хеш SafeLine CE: PBKDF2-HMAC-SHA256, соль ascii, 1024 итерации, 32 байта."""
+    salt = ''.join(secrets.choice('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
+                   for _ in range(8))
+    digest = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 1024, dklen=32).hex()
+    return digest, salt
+
+
 def site_hosts():
     return sorted({h for s in site_list() for h in (s.get('hosts') or []) if h})
 
@@ -3182,6 +3192,55 @@ class H(BaseHTTPRequestHandler):
                 cfg[uname] = {'role': role, 'perms': perms, 'domains': domains,
                               'updated_at': int(time.time())}
                 save_state(STATE)
+            return self._json(200, {'ok': True})
+        if u.path == '/api/access/user':
+            uname = str(body.get('username') or '').strip()[:64]
+            password = str(body.get('password') or '')
+            if not re.match(r'^[A-Za-z0-9_.\-]{3,64}$', uname):
+                return self._json(400, {'ok': False,
+                                        'error': 'логин: 3-64 символа (латиница, цифры, . _ -)'})
+            if len(password) < 8:
+                return self._json(400, {'ok': False, 'error': 'пароль: минимум 8 символов'})
+            if uname in panel_users():
+                return self._json(400, {'ok': False, 'error': 'такой пользователь уже есть'})
+            digest, salt = user_hash(password)
+            try:
+                with db() as conn, conn.cursor() as c:
+                    c.execute('INSERT INTO mgt_user (role, username, password, kdf, salt, password_enabled, '
+                              'tfa_enabled, tfa_binded, jwt_version, created_at, updated_at, api_token, third_id) '
+                              'VALUES (1, %s, %s, %s, %s, true, false, false, 1, now(), now(), \'\', \'\')',
+                              (uname, digest, 'pbkdf2', salt))
+                    conn.commit()
+            except Exception as e:
+                return self._json(500, {'ok': False, 'error': str(e)[:200]})
+            return self._json(200, {'ok': True, 'username': uname})
+        if u.path == '/api/access/user/delete':
+            uname = str(body.get('username') or '')[:64]
+            if uname == self._user()['username']:
+                return self._json(400, {'ok': False, 'error': 'нельзя удалить себя'})
+            if uname == 'admin':
+                return self._json(400, {'ok': False, 'error': 'учётную запись admin удалять нельзя'})
+            if uname not in panel_users():
+                return self._json(404, {'ok': False, 'error': 'пользователь не найден'})
+            with db() as conn, conn.cursor() as c:
+                c.execute('DELETE FROM mgt_user WHERE username=%s', (uname,))
+                conn.commit()
+            with LOCK:
+                (STATE.get('access') or {}).get('users', {}).pop(uname, None)
+                save_state(STATE)
+            return self._json(200, {'ok': True})
+        if u.path == '/api/access/user/password':
+            uname = str(body.get('username') or '')[:64]
+            password = str(body.get('password') or '')
+            if len(password) < 8:
+                return self._json(400, {'ok': False, 'error': 'пароль: минимум 8 символов'})
+            if uname not in panel_users():
+                return self._json(404, {'ok': False, 'error': 'пользователь не найден'})
+            digest, salt = user_hash(password)
+            with db() as conn, conn.cursor() as c:
+                c.execute("UPDATE mgt_user SET password=%s, kdf='pbkdf2', salt=%s, pwd_updated_at=now(), "
+                          'jwt_version = jwt_version + 1 WHERE username=%s', (digest, salt, uname))
+                conn.commit()
             return self._json(200, {'ok': True})
         if u.path == '/api/lb':
             lb = body.get('lb') or {}
