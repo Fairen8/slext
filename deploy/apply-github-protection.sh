@@ -1,7 +1,7 @@
 #!/bin/bash
-# Включает нативную защиту репозитория: rulesets для dev/main/prod + security-настройки.
-# Правила: dev — PR+1 одобрение; main — PR только участникам + одобрение владельца;
-# prod — только из main + одобрение владельца + обязательный чек `tests` (без него merge запрещён).
+# Включает нативную защиту репозитория: rulesets для main/prod + security-настройки.
+# Правила: main — рабочая ветка: PR + 1 одобрение участника (одобрение владельца не нужно);
+# prod — только из main + одобрение владельца (Approve или его merge) + обязательный чек `tests`.
 # Владелец (текущий gh-пользователь) получает bypass — работает напрямую при необходимости.
 # Скрипт идемпотентный: существующие rulesets обновляются, устаревшие удаляются.
 # Запуск: bash deploy/apply-github-protection.sh [owner/repo]
@@ -39,15 +39,14 @@ json.dump(data, sys.stdout, ensure_ascii=False)
 }
 
 echo "[1/5] Устаревшие rulesets..."
-for stale in prod-main-protection; do
+for stale in prod-main-protection dev-protection; do
   sid="$(ruleset_id "$stale")"
   if [ -n "$sid" ]; then
     gh api -X DELETE "repos/$REPO/rulesets/$sid" >/dev/null && echo "  - удалён $stale (#$sid)"
   fi
 done
 
-echo "[2/5] Rulesets (dev/main/prod)..."
-apply_ruleset dev.json
+echo "[2/5] Rulesets (main/prod)..."
 apply_ruleset main.json
 apply_ruleset prod.json
 
