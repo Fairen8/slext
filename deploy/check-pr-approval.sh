@@ -35,7 +35,8 @@ fi
 
 APPROVERS=$(gh api "repos/$REPO/pulls/$PR/reviews" \
   --jq '[.[] | select(.state=="APPROVED") | .user.login] | unique | join(",")')
-echo "Одобрения: ${APPROVERS:-нет}"
+MERGED_BY=$(gh api "repos/$REPO/pulls/$PR" --jq '.merged_by.login // ""')
+echo "Одобрения: ${APPROVERS:-нет}; merge выполнил: ${MERGED_BY:-—}"
 
 if [ "$BASE" = "prod" ]; then
   # В прод можно мёржить только из main.
@@ -43,12 +44,12 @@ if [ "$BASE" = "prod" ]; then
     echo "POLICY FAIL: в prod можно мёржить только из ветки main (PR #$PR: $HEAD -> prod)."
     exit 1
   fi
-  # Владелец сам решает по prod (его merge = одобрение). Чужой PR — нужно одобрение владельца.
-  if [ "$AUTHOR" != "$OWNER" ]; then
+  # Подтверждение владельца для prod: либо ревью Approve от него, либо его собственный merge.
+  if [ "$AUTHOR" != "$OWNER" ] && [ "$MERGED_BY" != "$OWNER" ]; then
     OWNER_STATE=$(gh api "repos/$REPO/pulls/$PR/reviews" \
       --jq "[.[] | select(.user.login==\"$OWNER\")] | last | .state // \"NONE\"")
     if [ "$OWNER_STATE" != "APPROVED" ]; then
-      echo "POLICY FAIL: PR #$PR в prod не одобрен @$OWNER."
+      echo "POLICY FAIL: PR #$PR в prod не одобрен @$OWNER (нужен Approve или merge владельца)."
       exit 1
     fi
   fi
@@ -56,7 +57,7 @@ if [ "$BASE" = "prod" ]; then
 else
   # main: merge участника должен быть через PR с хотя бы одним одобрением;
   # одобрение владельца не требуется. Merge самого владельца разрешён.
-  if [ "$AUTHOR" != "$OWNER" ] && [ -z "$APPROVERS" ]; then
+  if [ "$AUTHOR" != "$OWNER" ] && [ "$MERGED_BY" != "$OWNER" ] && [ -z "$APPROVERS" ]; then
     echo "POLICY FAIL: PR #$PR в main не имеет ни одного одобрения участника."
     exit 1
   fi
