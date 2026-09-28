@@ -1,9 +1,9 @@
 {
-  "name": "prod-main-protection",
+  "name": "main-protection",
   "target": "branch",
   "enforcement": "active",
   "conditions": {
-    "ref_name": { "include": ["refs/heads/prod", "refs/heads/main"], "exclude": [] }
+    "ref_name": { "include": ["refs/heads/main"], "exclude": [] }
   },
   "rules": [
     { "type": "deletion" },
@@ -17,13 +17,6 @@
         "require_code_owner_review": true,
         "require_last_push_approval": true,
         "required_review_thread_resolution": true
-      }
-    },
-    {
-      "type": "required_status_checks",
-      "parameters": {
-        "strict_required_status_checks_policy": true,
-        "required_status_checks": [ { "context": "static-checks" } ]
       }
     }
   ]

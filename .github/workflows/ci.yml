@@ -1,21 +1,24 @@
-name: ci
+name: tests
 
+# Тесты запускаются только в прод-пути:
+#  - pull request в prod — обязательная проверка, без неё merge заблокирован;
+#  - внутри deploy.yml (перед выкаткой) через workflow_call — при провале деплой не стартует.
 on:
-  push:
-    branches: [dev, main, prod]
   pull_request:
+    branches: [prod]
+  workflow_call:
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  static-checks:
-    name: static-checks
+  tests:
+    name: tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -31,6 +34,9 @@ jobs:
 
       - name: Синтаксис Python
         run: python3 -m py_compile bin/*.py
+
+      - name: Тесты политики зала ожидания
+        run: python3 tests/wr_policy_test.py
 
       - name: Синтаксис JavaScript
         run: node --check www/ext.js
@@ -48,8 +54,9 @@ jobs:
 
       - name: Валидность JSON (rulesets)
         run: |
-          python3 -m json.tool deploy/rulesets/prod-main.json >/dev/null
           python3 -m json.tool deploy/rulesets/dev.json >/dev/null
+          python3 -m json.tool deploy/rulesets/main.json >/dev/null
+          python3 -m json.tool deploy/rulesets/prod.json >/dev/null
           python3 -m json.tool deploy/security-settings.json >/dev/null
 
       - name: Патчер содержит ключевые маркеры
@@ -57,6 +64,13 @@ jobs:
           grep -q 'slext-px-format' bin/patch_site_page.py
           grep -q 'slext-gate' bin/patch_site_page.py
           grep -q 'slext-skip' bin/patch_site_page.py
+
+      - name: Бэкапы nginx вне include-каталогов
+        run: |
+          if grep -q '"\$f\.slext-orig"' bin/apply-injection.sh; then
+            echo "::error::Бэкап конфига пишется в sites-enabled — сломает nginx -t и зал ожидания"; exit 1
+          fi
+          grep -q 'slext-backup-moved' bin/apply-injection.sh
 
       - name: Секреты не закоммичены
         run: |

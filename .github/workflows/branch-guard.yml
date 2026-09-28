@@ -8,6 +8,10 @@ on:
     branches: [prod, main]
   workflow_dispatch:
 
+concurrency:
+  group: branch-guard-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   pull-requests: read

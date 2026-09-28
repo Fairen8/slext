@@ -6,10 +6,13 @@
 
 | Ветка | Назначение | Правила |
 |---|---|---|
-| `dev` | интеграция: все фичи и фиксы | PR с 1 одобрением коллеги, проверки CI |
+| `dev` | интеграция: все фичи и фиксы | PR с 1 одобрением коллеги |
 | `main` | стабильная | PR только для участников, одобрение владельца |
-| `prod` | деплой на сервер | PR только из `main`, одобрение владельца |
+| `prod` | деплой на сервер | PR только из `main`, одобрение владельца + обязательные тесты `tests` |
 | `feature/*`, `fix/*`, `docs/*` | рабочие ветки | создаются от `dev`, живут до мержа |
+
+Тесты запускаются **только в прод-пути** (PR в `prod` и повторно перед деплоем): упали
+тесты — merge в `prod` заблокирован и деплой не стартует.
 
 На GitHub для веток включены нативные rulesets (после `bash deploy/apply-github-protection.sh`):
 напрямую пушить нельзя — только через PR; `prod`/`main` требуют одобрения владельца.
@@ -32,7 +35,7 @@ git push -u origin feature/short-name
 gh pr create --base dev --fill          # PR в dev
 ```
 
-1. CI (`.github/workflows/ci.yml`) проверит синтаксис и отсутствие секретов.
+1. Проверки запустятся при PR в `prod` (обязательный чек `tests`) — при PR в `dev`/`main` CI не гоняется.
 2. Один коллега ставит approve.
 3. Squash-merge в `dev`.
 
@@ -40,11 +43,13 @@ gh pr create --base dev --fill          # PR в dev
 
 ```bash
 git checkout dev && git pull
-gh pr create --base prod --head dev --title "release: ..." --body "..."
+gh pr create --base main --head dev --title "release: ..." --body "..."
+gh pr create --base prod --head main --title "release: ..." --body "..."
 ```
 
-Мерж в `prod` возможен **только после одобрения @Fairen8**; после мержа GitHub Actions
-автоматически деплоит на сервер (`sudo /usr/local/bin/slext-deploy`, с бэкапом `/opt/slext.old`).
+Мерж в `prod` возможен **только после одобрения @Fairen8 и зелёных тестов `tests`**
+(при PR в `prod` они запускаются автоматически). После мержа GitHub Actions деплоит на сервер
+(`policy → tests → deploy`, с бэкапом `/opt/slext.old` и подтверждением окружения `production`).
 Ручной запуск деплоя: Actions → **deploy** → Run workflow.
 
 ## Стиль кода
