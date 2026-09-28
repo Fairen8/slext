@@ -62,12 +62,15 @@
 
 ```bash
 git push origin feature/my-task         # рабочая ветка
-gh pr create --base main                # PR в main (1 одобрение коллеги)
+gh pr create --base main                # PR в main (1 одобрение коллеги; merge/squash)
 # после мержа в main:
 gh pr create --base prod --head main    # PR в prod (только из main)
 #   → автоматически запускаются тесты; без зелёного `tests` merge заблокирован,
 #     для prod нужно подтверждение владельца (Approve или его merge)
 ```
+
+> Мерж в `prod` делается **merge-коммитом** (в ruleset `prod-protection` разрешён только он):
+> так история `main` становится частью `prod`, и следующие релизы не конфликтуют.
 
 После мержа в `prod` автоматически запускается **единый пайплайн**
 `.github/workflows/pipeline.yml`:
