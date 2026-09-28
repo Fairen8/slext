@@ -2,27 +2,26 @@
 
 ## Ветки и правила
 
-Поток: **feature → dev → main → prod** (в `prod` — только из `main`).
+Поток: **feature → main → prod** (в `prod` — только из `main`).
 
 | Ветка | Назначение | Правила |
 |---|---|---|
-| `dev` | интеграция: все фичи и фиксы | PR с 1 одобрением коллеги |
-| `main` | стабильная | PR только для участников, одобрение владельца |
-| `prod` | деплой на сервер | PR только из `main`, одобрение владельца + обязательные тесты `tests` |
-| `feature/*`, `fix/*`, `docs/*` | рабочие ветки | создаются от `dev`, живут до мержа |
+| `main` | интеграция: все фичи и фиксы | PR только для участников, 1 одобрение участника (одобрение владельца не требуется) |
+| `prod` | деплой на сервер | PR только из `main`, одобрение владельца (Approve или его merge) + обязательные тесты `tests` |
+| `feature/*`, `fix/*`, `docs/*` | рабочие ветки | создаются от `main`, живут до мержа |
 
 Тесты запускаются **только в прод-пути** (PR в `prod` и повторно перед деплоем): упали
 тесты — merge в `prod` заблокирован и деплой не стартует.
 
 На GitHub для веток включены нативные rulesets (после `bash deploy/apply-github-protection.sh`):
-напрямую пушить нельзя — только через PR; `prod`/`main` требуют одобрения владельца.
-Дополнительно CI проверяет процесс перед деплоем (`deploy/check-pr-approval.sh`), а
-`branch-guard` фиксирует нарушения issue.
+напрямую пушить нельзя — только через PR; **одобрение владельца нужно только для `prod`**,
+в `main` мержат участники (роль write). Дополнительно CI проверяет процесс перед
+деплоем (`deploy/check-pr-approval.sh`), а `branch-guard` фиксирует нарушения issue.
 
 ## Рабочий цикл
 
 ```bash
-git checkout dev && git pull
+git checkout main && git pull
 git checkout -b feature/short-name
 
 # ... код ...
@@ -32,18 +31,17 @@ python3 -m py_compile bin/*.py
 node --check www/ext.js
 
 git push -u origin feature/short-name
-gh pr create --base dev --fill          # PR в dev
+gh pr create --base main --fill         # PR в main
 ```
 
-1. Проверки запустятся при PR в `prod` (обязательный чек `tests`) — при PR в `dev`/`main` CI не гоняется.
+1. Проверки запустятся при PR в `prod` (обязательный чек `tests`) — при PR в `main` CI не гоняется.
 2. Один коллега ставит approve.
-3. Squash-merge в `dev`.
+3. Squash-merge в `main`.
 
 ## Выкат на сервер
 
 ```bash
-git checkout dev && git pull
-gh pr create --base main --head dev --title "release: ..." --body "..."
+git checkout main && git pull
 gh pr create --base prod --head main --title "release: ..." --body "..."
 ```
 

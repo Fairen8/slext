@@ -2,18 +2,18 @@
 
 ## Ветки и правила
 
-Поток: **feature → dev → main → prod** (в `prod` можно мёржить только из `main`).
+Поток: **feature → main → prod** (в `prod` можно мёржить только из `main`).
 
 | Ветка | Назначение | Правила |
 |---|---|---|
-| `dev` | рабочая интеграция | PR + 1 одобрение, запрет force-push, linear history |
-| `main` | стабильная | PR **только для участников** + **одобрение владельца** (code owner), запрет force-push |
+| `main` | рабочая интеграция и стабильная | PR **только для участников** + **1 одобрение участника**; одобрение владельца **не требуется**, запрет force-push, linear history |
 | `prod` | **деплой** | PR **только из `main`**, **одобрение владельца** и **обязательные тесты `tests`** — без них merge заблокирован |
-| `feature/*`, `fix/*`, `docs/*` | рабочие ветки | от `dev`, живут до мержа |
+| `feature/*`, `fix/*`, `docs/*` | рабочие ветки | от `main`, живут до мержа |
 
 «Только для участников» обеспечивается тем, что прямые пуши в `main`/`prod` запрещены
 (rulesets), а мёржить PR может только владелец/участники с правом записи; посторонние с
-форками могут лишь предложить PR.
+форками могут лишь предложить PR. **Одобрение владельца требуется только для `prod`** —
+мержи команды в `main` выполняются с одобрением любого участника.
 
 ### Тесты — только в прод-пути
 
@@ -21,10 +21,10 @@
 
 1. **PR в `prod`** — чек `tests` обязателен (ruleset `prod-protection`): пока тесты не прошли,
    кнопка merge недоступна. Это единственный обязательный чек во всём репозитории.
-2. **Push в `prod`** (результат мержа) — `deploy.yml` повторно прогоняет те же тесты перед
+2. **Push в `prod`** (результат мержа) — пайплайн повторно прогоняет те же тесты перед
    выкаткой; при падении job `deploy` не запускается вовсе.
 
-На PR в `dev`/`main` тесты не гоняются — они не создают шума и не тормозят команду.
+На PR в `main` тесты не гоняются — они не создают шума и не тормозят команду.
 
 ### Как это контролируется
 
@@ -34,18 +34,22 @@
    bash deploy/apply-github-protection.sh
    ```
 
-   - `dev`: PR + 1 одобрение, linear history, запрет force-push и удаления;
-   - `main`: PR **только для участников** + **одобрение владельца** (code owner из
-     `CODEOWNERS`), linear history;
-   - `prod`: то же + **обязательный чек `tests`**;
+   - `main`: PR + 1 одобрение участника (владелец не требуется), linear history,
+     запрет force-push и удаления;
+   - `prod`: PR только из `main` + **одобрение владельца** (code owner из `CODEOWNERS`) +
+     **обязательный чек `tests`**;
    - владелец (текущий `gh`-пользователь) получает bypass — команда не может.
 
 2. **CI-контроль (работает всегда):**
-   - `ci.yml` → job `tests` — единственное место с тестами (синтаксис Python/JS/Shell,
-     валидность rulesets, проверка секретов). Вызывается из `deploy.yml` как reusable.
-   - `deploy.yml` → job `policy` — перед выкаткой проверяет, что пуш в `prod` является
-     результатом PR **из `main`**, одобренного владельцем (`deploy/check-pr-approval.sh`).
-   - `branch-guard.yml` — на каждый пуш в `prod`/`main` повторяет проверку; при нарушении
+   - `.github/workflows/pipeline.yml` — **единый пайплайн**: `tests → policy → deploy`.
+     - `tests` — единственное место с тестами (синтаксис Python/JS/Shell, тесты политики зала,
+       валидность rulesets, проверка секретов). Гоняется на PR в `prod` (обязательный чек)
+       и повторно перед выкаткой.
+     - `policy` — только на push в `prod` (после тестов): PR из `main` с подтверждением
+       владельца (Approve-ревью или его merge) — `deploy/check-pr-approval.sh`.
+     - `deploy (prod)` — только после `tests` и `policy` и подтверждения окружения `production`.
+   - `branch-guard.yml` — на каждый пуш в `prod`/`main` повторяет проверку процесса; для `main`
+     достаточно PR с одобрением участника (одобрение владельца не требуется); при нарушении
      создаёт issue и красит workflow.
 
 Ручной запуск деплоя (Actions → deploy → Run workflow) policy не проверяет — это осознанный
@@ -57,26 +61,30 @@
 ## Как выкатить новую версию
 
 ```bash
-git push origin feature/my-task        # рабочая ветка
-gh pr create --base dev                # PR в dev (1 одобрение коллеги)
-# после мержа в dev:
-gh pr create --base main --head dev    # PR в main (одобрение владельца)
-gh pr create --base prod --head main   # PR в prod (только из main)
-#   → автоматически запускаются тесты; без зелёного `tests` merge заблокирован
+git push origin feature/my-task         # рабочая ветка
+gh pr create --base main                # PR в main (1 одобрение коллеги; merge/squash)
+# после мержа в main:
+gh pr create --base prod --head main    # PR в prod (только из main)
+#   → автоматически запускаются тесты; без зелёного `tests` merge заблокирован,
+#     для prod нужно подтверждение владельца (Approve или его merge)
 ```
 
-После мержа в `prod` автоматически запускается `.github/workflows/deploy.yml`:
+> Мерж в `prod` делается **merge-коммитом** (в ruleset `prod-protection` разрешён только он):
+> так история `main` становится частью `prod`, и следующие релизы не конфликтуют.
 
-1. **policy** — проверка: PR из `main`, одобрен владельцем.
-2. **tests** — те же тесты, что гейтили merge (reusable `ci.yml`).
+После мержа в `prod` автоматически запускается **единый пайплайн**
+`.github/workflows/pipeline.yml`:
+
+1. **tests** — тесты кода, которые гейтили merge.
+2. **policy** — проверка процесса: PR из `main`, подтверждение владельца (Approve или его merge).
 3. **deploy (prod)** — только если предыдущие шаги зелёные, и после **подтверждения
    окружения `production`** владельцем. Дальше tar-over-ssh в `/tmp/slext-stage` →
    `sudo -n /usr/local/bin/slext-deploy` (бэкап `/opt/slext.old`, сохранение
    `slext.env`/`state.json`, патчи, restart API, health-check).
 
-Любой упавший шаг блокирует следующий: упали тесты — деплоя нет; нет одобрения — деплоя нет.
+Любой упавший шаг блокирует следующий: упали тесты — деплоя нет; нет подтверждения — деплоя нет.
 
-Ручной запуск: GitHub → Actions → **deploy** → *Run workflow* (policy пропускается,
+Ручной запуск: GitHub → Actions → **pipeline** → *Run workflow* (policy пропускается,
 тесты и подтверждение окружения остаются).
 
 ## Одноразовая настройка
@@ -119,7 +127,7 @@ gh secret set SSH_KEY  --env production -R <owner>/slext < ~/.ssh/slext_deploy
 ## Откат
 
 - Быстрый: на сервере `rm -rf /opt/slext && mv /opt/slext.old /opt/slext && bash /opt/slext/bin/apply-injection.sh && systemctl restart slext-api`.
-- Через git: `git revert <commit> && git push origin dev:prod`.
+- Через git: revert в `main` (PR), затем `main → prod` (PR) — деплой откатит версию.
 
 ## Замечания
 
