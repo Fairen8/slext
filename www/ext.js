@@ -2,7 +2,7 @@
   'use strict';
 
   var API = location.origin + '/extapi';
-  var EXTVER = '46';
+  var EXTVER = '49';
 
   function tok() {
     try { return localStorage.getItem('safeline_auth') || ''; } catch (e) { return ''; }
@@ -1539,6 +1539,9 @@
 
   function wrBuild(d) {
     var cfg = d.cfg || {};
+    var mgt = d.mgt || {};
+    var lim = (d.limits && (d.limits.desired && Object.keys(d.limits.desired).length
+                            ? d.limits.desired : d.limits.actual)) || {};
     var page = cfg.page || {}, sch = cfg.schedule || {}, au = cfg.auto || {}, nf = cfg.notify || {};
     var dayNames = [['1', 'Пн'], ['2', 'Вт'], ['3', 'Ср'], ['4', 'Чт'], ['5', 'Пт'], ['6', 'Сб'], ['7', 'Вс']];
     var days = dayNames.map(function (x) {
@@ -1558,6 +1561,16 @@
       '<div class="sl-kpis" id="sl-wr-kpis"></div>' +
       '<div class="sl-sub">Активации по дням</div><div id="sl-wr-bars"></div>' +
       '<div class="sl-hint" id="sl-wr-updated"></div>' +
+      '<details class="sl-details"><summary>Лимиты зала (SafeLine)</summary>' +
+      '<div class="sl-hint">Панельный API SafeLine в CE эти значения не меняет — управляем мы. Порог включения: одновременных активных посетителей, при превышении новые встают в очередь. Таймаут сессии: 1–30 (мин). Макс. очередь: 0 — без ограничения. Значения применяются при следующем включении зала.</div>' +
+      '<div class="sl-row"><label data-sl-tip="Сколько одновременных активных посетителей допускается, прежде чем включится очередь.">порог включения, посетителей</label>' +
+      '<input class="sl-input sl-w" id="sl-wr-lim-max" type="number" min="1" max="5000" value="' + esc(lim.max_concurrent || 100) + '">' +
+      '<label data-sl-tip="Сколько минут держится активная сессия посетителя после последнего запроса.">таймаут сессии, мин</label>' +
+      '<input class="sl-input sl-w" id="sl-wr-lim-to" type="number" min="1" max="30" value="' + esc(lim.session_timeout || 3) + '">' +
+      '<label data-sl-tip="Предел очереди; 0 — без ограничения.">макс. очередь</label>' +
+      '<input class="sl-input sl-w" id="sl-wr-lim-wait" type="number" min="0" value="' + esc(lim.max_waiting || 0) + '">' +
+      '<button class="sl-btn sl-btn-pri" id="sl-wr-lim-save">Сохранить лимиты</button>' +
+      '<button class="sl-btn" id="sl-wr-lim-reset" title="Перезапустить модуль очереди (сайт может мигнуть 2–5 секунд)">Сбросить очередь</button></div></details>' +
       '<details class="sl-details"><summary>Автоматизация: расписание, авто-режим, уведомления</summary>' +
       '<div class="sl-row"><label><input type="checkbox" id="sl-wr-sch-on"' + (sch.enabled ? ' checked' : '') + '> по расписанию</label>' + days + '</div>' +
       '<div class="sl-row"><label>с</label><input class="sl-input sl-w" id="sl-wr-from" value="' + esc(sch.from) + '">' +
@@ -1617,6 +1630,25 @@
         return;
       }
       if (e.target.id === 'sl-wr-refresh') { wrLoad(false); return; }
+      if (e.target.id === 'sl-wr-lim-save') {
+        api('/api/waiting/extras', { method: 'POST', body: { site: site, limits: {
+          max_concurrent: parseInt(document.getElementById('sl-wr-lim-max').value, 10) || 100,
+          session_timeout: parseInt(document.getElementById('sl-wr-lim-to').value, 10) || 3,
+          max_waiting: parseInt(document.getElementById('sl-wr-lim-wait').value, 10) || 0 } } })
+          .then(function (r) {
+            toast(r.ok ? 'Лимиты зала сохранены' : ('Ошибка: ' + (r.error || '')), !r.ok);
+            if (r.ok) wrLoad(false);
+          });
+        return;
+      }
+      if (e.target.id === 'sl-wr-lim-reset') {
+        if (!window.confirm('Перезапустить модуль зала ожидания? Сайт может мигнуть 2–5 секунд.')) return;
+        api('/api/waiting/reset', { method: 'POST', body: { site: site } }).then(function (r) {
+          toast(r.ok ? 'Очередь сброшена' : ('Ошибка: ' + (r.error || '')), !r.ok);
+          if (r.ok) wrLoad(false);
+        });
+        return;
+      }
       if (e.target.id === 'sl-wr-site') {
         WR_SITE = e.target.value;
         removeSection('sl-wr-sec');

@@ -1591,12 +1591,120 @@ def wr_read_actual(site_id, token=None, tries=3, pause=0.4):
     return False, None, {}
 
 
+def wr_limits_set(max_concurrent=None, session_timeout=None, max_waiting=None):
+    """Лимиты зала: сохраняем желаемые в state, пишем строку mgt и waiting.yaml.
+
+    Панельный API CE лимиты не меняет, а mgt в момент переключения зала
+    синхронизирует модуль со строкой mgt_waiting_room. Поэтому наши значения
+    применяются перед каждым включением (см. wr_apply) и лечатся воркером.
+    """
+    lim = {}
+    if max_concurrent is not None:
+        lim['max_concurrent'] = clamp_int(max_concurrent, 1, 5000, 100)
+    if session_timeout is not None:
+        lim['session_timeout'] = clamp_int(session_timeout, 1, 30, 3)
+    if max_waiting is not None:
+        lim['max_waiting'] = clamp_int(max_waiting, 0, 100000, 200)
+    if not lim:
+        return False, 'нечего менять'
+    with LOCK:
+        cur = dict(((STATE.get('waiting') or {}).get('limits') or {}))
+        cur.update(lim)
+        STATE.setdefault('waiting', {})['limits'] = cur
+        save_state(STATE)
+    ok, err = wr_limits_sql(lim)
+    if ok:
+        wr_limits_yaml(lim)
+    return ok, err
+
+
+def wr_limits_sql(lim):
+    sets, vals = [], []
+    for k in ('max_concurrent', 'max_waiting', 'session_timeout'):
+        if k in lim:
+            sets.append(k + '=%s')
+            vals.append(int(lim[k]))
+    if not sets:
+        return True, ''
+    try:
+        with db() as conn, conn.cursor() as c:
+            c.execute('UPDATE mgt_waiting_room SET ' + ', '.join(sets) + ', updated_at=now() WHERE id=1', vals)
+            conn.commit()
+        return True, ''
+    except Exception as e:
+        return False, str(e)[:200]
+
+
+WR_YAML = '/data/safeline/resources/chaos/waiting.yaml'
+
+
+def wr_limits_yaml(lim):
+    """Пишем лимиты и в waiting.yaml (дефолты модуля). Один раз делаем бэкап."""
+    try:
+        txt = open(WR_YAML, encoding='utf-8', errors='replace').read()
+    except OSError:
+        return
+    orig = txt
+    if not os.path.exists(WR_YAML + '.slext-orig'):
+        try:
+            import shutil as _sh
+            _sh.copy2(WR_YAML, WR_YAML + '.slext-orig')
+        except OSError:
+            pass
+    mapping = {'max_concurrent': 'max_concurrent', 'max_waiting': 'max_waiting'}
+    for k, y in mapping.items():
+        if k in lim:
+            txt = re.sub(r'^(\s*%s:)\s*\d+' % y, r'\g<1> %d' % int(lim[k]), txt, flags=re.M)
+    yto = {'session_timeout': 'cp_session_timeout'}
+    if 'session_timeout' in lim:
+        secs = int(lim['session_timeout']) * 60 if int(lim['session_timeout']) <= 30 else int(lim['session_timeout'])
+        txt = re.sub(r'^(\s*cp_session_timeout:)\s*\d+', r'\g<1> %d' % secs, txt, flags=re.M)
+    if txt != orig:
+        try:
+            open(WR_YAML, 'w', encoding='utf-8').write(txt)
+        except OSError:
+            pass
+
+
+def wr_limits_desired():
+    with LOCK:
+        return dict(((STATE.get('waiting') or {}).get('limits') or {}))
+
+
+def wr_limits_actual():
+    try:
+        with db() as conn, conn.cursor() as c:
+            c.execute('SELECT max_concurrent, max_waiting, session_timeout FROM mgt_waiting_room WHERE id=1')
+            r = c.fetchone()
+        if r:
+            return {'max_concurrent': int(r[0] or 0), 'max_waiting': int(r[1] or 0),
+                    'session_timeout': int(r[2] or 0)}
+    except Exception:
+        pass
+    return {}
+
+
+def wr_limits_enforce():
+    """Если строка mgt разошлась с нашими желаемыми лимитами — вернуть наши."""
+    want = wr_limits_desired()
+    if not want:
+        return
+    have = wr_limits_actual()
+    diff = {k: v for k, v in want.items() if int(have.get(k) or 0) != int(v)}
+    if diff:
+        wr_limits_sql(diff)
+
+
 def wr_apply(host, site_id, desired, source, token=None, notify_change=True):
     """Единая точка переключения зала: mgt + состояние + фоновое восстановление патчей."""
     desired = bool(desired)
     if not WR_OP_LOCK.acquire(timeout=20):
         return {'ok': False, 'error': 'переключение уже выполняется, повторите через пару секунд'}
     try:
+        if desired:
+            # перед включением возвращаем наши лимиты: mgt на переключении
+            # синхронизирует модуль именно со строкой mgt_waiting_room
+            wr_limits_enforce()
         cfg = _wr_cfg(host)
         notify_on = bool((cfg.get('notify') or {}).get('enabled', True))
         mgt_conf_forget(site_id)
@@ -1742,21 +1850,31 @@ p{color:var(--muted);line-height:1.65;margin:0 0 16px;font-size:15px}
   function ready(){if(done)return;done=true;elMsg.textContent=T.ready;elPos.textContent='\\u2713';elDots.style.display='none';setTimeout(function(){location.reload();},2500);}
   function render(d){if(!d||typeof d.pos!=='number'||typeof d.total!=='number')return;elPos.textContent=d.pos;elTotal.textContent=d.total;if(d.pos===0)ready();}
   function conn(){elMsg.textContent=T.conn;}
-  var delay=2500, fails=0;
+  var delay=2500, fails=0, wsOpen=false;
   function schedule(ms){setTimeout(poll,ms);}
   function poll(){
+    if(done||wsOpen)return;
     if(document.hidden){schedule(10000);return;}
     fetch('/.safeline/api/waiting/query',{cache:'no-store'}).then(function(r){if(r.status!==200)throw 0;return r.json();})
       .then(function(j){fails=0;if(j&&j.data){render(j.data);if(!done)schedule(2500);}else{conn();schedule(5000);}})
       .catch(function(){fails++;conn();schedule(Math.min(15000,3000+fails*2000));});
   }
+  function fullPage(){elMsg.textContent=T.full;elPos.textContent='\\u2014';elDots.style.display='none';
+    setTimeout(function(){location.reload();},30000);}
   if(SITE && location.hostname!==SITE){
     /* preview mode: no live queue */
   }else if(/(?:^|;\\s*)sl-waiting-state=full/.test(document.cookie)){
-    elMsg.textContent=T.full;elPos.textContent='\\u2014';elDots.style.display='none';
+    fullPage();
   }else{
-    poll();
-    document.addEventListener('visibilitychange',function(){if(!document.hidden&&!done)schedule(800);});
+    try{
+      var w=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/.safeline/api/waiting/ws');
+      var opened=false;
+      w.addEventListener('open',function(){opened=true;wsOpen=true;});
+      w.addEventListener('message',function(e){try{var d=JSON.parse(e.data);if(d&&typeof d.pos==='number'&&typeof d.total==='number'){render(d);}}catch(_){}});
+      w.addEventListener('error',function(){wsOpen=false;if(!opened)poll();});
+      w.addEventListener('close',function(){wsOpen=false;if(!done)poll();});
+    }catch(e){poll();}
+    document.addEventListener('visibilitychange',function(){if(!document.hidden&&!done&&!wsOpen)schedule(800);});
   }
   $stats
 })();
@@ -1829,29 +1947,90 @@ STATIC_RX = re.compile(r'\.(js|css|png|jpe?g|gif|webp|svg|ico|woff2?|ttf|eot|map
 RATE_CACHE = {'at': 0, 'window': 0, 'value': 0}
 
 
+def _rate_count_line(line, since):
+    """(в окне?, подходит?) для строки лога."""
+    m = PIPE_RE.match(line) or MAIN_RE.match(line)
+    if not m:
+        return False, False
+    ts = parse_ts(m.group('ts'))
+    if not ts:
+        return False, False
+    if ts < since:
+        return True, False
+    try:
+        ua = m.group('ua') or ''
+        req = m.group('req') or ''
+    except (IndexError, ValueError):
+        return False, False
+    if BOT_RX.search(ua):
+        return False, False
+    parts = req.split(' ')
+    if len(parts) < 2 or parts[0] != 'GET':
+        return False, False
+    path = parts[1]
+    if path.startswith('/.safeline/') or STATIC_RX.search(path):
+        return False, False
+    return False, True
+
+
+def _rate_scan_file(path, since):
+    """Скан хвоста лога: (число запросов, покрыто ли окно целиком)."""
+    count = 0
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return 0, False
+    chunk = 2 * 1024 * 1024
+    pos = size
+    total_read = 0
+    while pos > 0 and total_read <= 32 * 1024 * 1024:
+        start = max(0, pos - chunk)
+        try:
+            with open(path, 'rb') as f:
+                f.seek(start)
+                data = f.read(pos - start)
+        except OSError:
+            return count, False
+        total_read += pos - start
+        text = data.decode('utf-8', 'replace')
+        lines = text.split('\n')
+        if start > 0 and lines:
+            lines = lines[1:]
+        for line in reversed(lines):
+            old, hit = _rate_count_line(line, since)
+            if old:
+                return count, True
+            if hit:
+                count += 1
+        pos = start
+    return count, False
+
+
 def real_rate_pm(window):
     now = time.time()
-    if RATE_CACHE['window'] == window and now - RATE_CACHE['at'] < 20:
+    if RATE_CACHE['window'] == window and now - RATE_CACHE['at'] < 60:
         return RATE_CACHE['value']
     since = int(now - window)
+    files = sorted(glob.glob(os.path.join(SITE_LOG_DIR, 'accesslog_*')))
+    files += sorted(glob.glob(os.path.join(LOG_DIR, 'access.log*')))
     count = 0
-    for ts, m in iter_access(1):
-        if ts < since:
-            continue
-        try:
-            ua = m.group('ua') or ''
-            req = m.group('req') or ''
-        except (IndexError, ValueError):
-            continue
-        if BOT_RX.search(ua):
-            continue
-        parts = req.split(' ')
-        if len(parts) < 2 or parts[0] != 'GET':
-            continue
-        path = parts[1]
-        if path.startswith('/.safeline/') or STATIC_RX.search(path):
-            continue
-        count += 1
+    for path in reversed(files):
+        if path.endswith('.gz'):
+            try:
+                with gzip.open(path, 'rt', errors='replace') as fh:
+                    for line in fh:
+                        old, hit = _rate_count_line(line, since)
+                        if old:
+                            break
+                        if hit:
+                            count += 1
+            except OSError:
+                continue
+            break
+        n, covered = _rate_scan_file(path, since)
+        count += n
+        if covered:
+            break
     value = int(round(count * 60.0 / max(1, window)))
     RATE_CACHE.update({'at': now, 'window': window, 'value': value})
     return value
@@ -1890,6 +2069,10 @@ def _wr_tick(first=False):
         hosts = list(((STATE.get('waiting') or {}).get('sites') or {}).keys())
     if not hosts:
         return
+    try:
+        wr_limits_enforce()
+    except Exception:
+        pass
     if not WR_PATCH.get('running') and not site_markers_ok():
         site_patch_ensure(delay=0.2)
     for host in hosts:
@@ -2936,6 +3119,7 @@ PERM_POST = {
     '/api/waiting/config': 'wr.control',
     '/api/waiting/extras': 'wr.settings',
     '/api/waiting/page': 'wr.settings',
+    '/api/waiting/reset': 'wr.control',
     '/api/loadtest/start': 'lt.run',
     '/api/loadtest/stop': 'lt.run',
     '/api/loadtest/apply': 'lt.apply',
@@ -3187,7 +3371,9 @@ class H(BaseHTTPRequestHandler):
             return self._json(200, {'ok': True, 'sites': sites, 'host': host,
                                     'site': site, 'mgt': conf, 'mgt_ok': bool(conf), 'cfg': cfg,
                                     'live_rate': live, 'stats': stats, 'panel_base': panel_base,
-                                    'busy': WR_OP_LOCK.locked(), 'patch': patch})
+                                    'busy': WR_OP_LOCK.locked(), 'patch': patch,
+                                    'limits': {'desired': wr_limits_desired(),
+                                               'actual': wr_limits_actual()}})
         if u.path == '/api/loadtest':
             with LOCK:
                 job = json.loads(json.dumps(STATE.get('loadtest') or {}))
@@ -3656,6 +3842,14 @@ class H(BaseHTTPRequestHandler):
                        'mgt': mgt, 'mgt_ok': bool(mgt), 'cfg': waiting_cfg(host),
                        'changed': bool(res.get('changed'))}
             return self._json(200 if res.get('ok') else 400, payload)
+        if u.path == '/api/waiting/reset':
+            host = str(body.get('site') or '')[:200]
+            if not self._host_ok(host):
+                return self._json(403, {'ok': False, 'error': 'нет доступа к домену ' + host})
+            run(['docker', 'restart', 'safeline-tengine'], timeout=120)
+            time.sleep(7)
+            mgt_conf_forget(1)
+            return self._json(200, {'ok': True, 'info': 'очередь сброшена (модуль перезапущен)', 'mgt': waiting_conf(1)})
         if u.path == '/api/waiting/page':
             host = str(body.get('site') or '')[:200]
             if not self._host_ok(host):
@@ -3731,8 +3925,18 @@ class H(BaseHTTPRequestHandler):
                 if 'panel_base' in body:
                     STATE['waiting']['panel_base'] = str(body['panel_base'])[:200]
                 save_state(STATE)
+            lim = body.get('limits') or {}
+            lim_ok, lim_err = True, ''
+            if lim:
+                lim_ok, lim_err = wr_limits_set(lim.get('max_concurrent'),
+                                                lim.get('session_timeout'),
+                                                lim.get('max_waiting'))
             page_apply()
-            return self._json(200, {'ok': True, 'cfg': waiting_cfg(host)})
+            if not lim_ok:
+                return self._json(400, {'ok': False, 'error': 'лимиты: ' + (lim_err or ''),
+                                        'cfg': waiting_cfg(host)})
+            return self._json(200, {'ok': True, 'cfg': waiting_cfg(host),
+                                    'mgt': waiting_conf(1)})
         if u.path == '/api/dns/check':
             host = str(body.get('host') or '')[:200]
             hosts = [host] if host else []
@@ -3836,7 +4040,7 @@ class H(BaseHTTPRequestHandler):
             try:
                 with db() as conn, conn.cursor() as c:
                     c.execute('UPDATE mgt_waiting_room SET max_concurrent=%s WHERE website_id=%s',
-                              (int(rec.get('max_concurrent') or 5), site['id']))
+                              (max(100, int(rec.get('max_concurrent') or 100)), site['id']))
                     conn.commit()
             except Exception:
                 code = 0
