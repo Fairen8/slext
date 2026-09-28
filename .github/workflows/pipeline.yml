@@ -2,8 +2,8 @@ name: pipeline
 
 # Единый пайплайн: тесты кода → политика → деплой. Провал любого шага блокирует следующий.
 #  * pull_request → prod: обязательный чек `tests` (без него merge заблокирован);
-#  * push → prod (результат мержа): tests → policy → deploy (после подтверждения окружения);
-#  * вручную (Run workflow): policy пропускается, tests и подтверждение окружения работают.
+#  * push → prod (результат мержа): tests → policy → deploy (стартует автоматически);
+#  * вручную (Run workflow): policy пропускается, tests работают.
 on:
   pull_request:
     branches: [prod]
