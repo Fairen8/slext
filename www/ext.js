@@ -2,7 +2,7 @@
   'use strict';
 
   var API = location.origin + '/extapi';
-  var EXTVER = '43';
+  var EXTVER = '46';
 
   function tok() {
     try { return localStorage.getItem('safeline_auth') || ''; } catch (e) { return ''; }
@@ -1428,148 +1428,256 @@
       (rows || '<tr><td colspan="7" class="sl-hint">Активаций ещё не было</td></tr>') + '</table>';
   }
 
-  function renderWaitingCard(host) {
-    if (document.getElementById('sl-wr-sec') || !host) return;
-    api('/api/waiting').then(function (d) {
-      if (!d || !d.ok || document.getElementById('sl-wr-sec')) return;
-      var cfg = d.cfg || {};
-      var page = cfg.page || {}, sch = cfg.schedule || {}, au = cfg.auto || {}, nf = cfg.notify || {}, st = cfg.state || {};
-      var aru = cfg.auto_run || {}, alog = cfg.auto_log || [];
-      var liveNote = (d.live_rate === null || d.live_rate === undefined) ? '—' : (esc(d.live_rate) + ' зап/мин');
-      var autoLive = 'Сейчас: ' + liveNote +
-        '. Последняя проверка: ' + (aru.last_eval ? new Date(aru.last_eval * 1000).toLocaleTimeString('ru-RU') : 'ещё не было') +
-        (aru.rate !== undefined ? (', тогда трафик ' + esc(aru.rate) + ' зап/мин') : '') +
-        (aru.above !== undefined ? (', счётчики: выше порога ' + esc(aru.above) + '/' + esc(au.hold || 3) +
-                                    ', ниже ' + esc(aru.below) + '/' + esc(au.hold_off || 4)) : '') + '.';
-      var autoLogHtml = alog.length
-        ? ('<div class="sl-sub">Журнал авто-режима</div><table class="sl-table"><tr><th>Время</th><th>Трафик</th><th>Решение</th><th>Причина</th></tr>' +
-           alog.slice(0, 10).map(function (x) {
-             var act = x.action === 'on' ? '<b class="sl-err">включил</b>' :
-                       (x.action === 'off' ? '<b>выключил</b>' : 'ждёт');
-             return '<tr><td>' + (x.ts ? new Date(x.ts * 1000).toLocaleTimeString('ru-RU') : '—') + '</td>' +
-               '<td>' + esc(x.rate) + ' зап/мин</td><td>' + act + '</td><td>' + esc(x.reason) + '</td></tr>';
-           }).join('') + '</table>')
-        : '<div class="sl-hint">Журнал авто-режима пуст (авто выключено или ещё не было проверок).</div>';
-      var mgt = d.mgt || {};
-      var sites = (d.sites || []).map(function (s) {
+  var WR_BOX = null;
+  var WR_TIMER = null;
+  var WR_SITE = '';
+  var WR_LAST = null;
+  var WR_BUSY = false;
+
+  function wrStopPoll() {
+    if (WR_TIMER) { clearTimeout(WR_TIMER); WR_TIMER = null; }
+  }
+
+  function wrSchedule(ms) {
+    wrStopPoll();
+    WR_TIMER = setTimeout(function () {
+      WR_TIMER = null;
+      if (SL_TAB === 'wr' && document.getElementById('sl-wr-sec')) wrLoad(false);
+    }, ms);
+  }
+
+  function wrErr(m) {
+    var e = document.getElementById('sl-wr-err');
+    if (!e) return;
+    if (m) { e.style.display = ''; e.textContent = m; }
+    else { e.style.display = 'none'; e.textContent = ''; }
+  }
+
+  function wrLoad(first) {
+    var url = '/api/waiting' + (WR_SITE ? '?site=' + encodeURIComponent(WR_SITE) : '');
+    api(url).then(function (d) {
+      if (!d || !d.ok) {
+        wrErr((d && d.error) || 'нет данных от API');
+        wrSchedule(8000);
+        return;
+      }
+      wrErr('');
+      WR_LAST = d;
+      if (first || !document.getElementById('sl-wr-sec')) wrBuild(d);
+      wrRender(d);
+      wrSchedule(5000);
+    });
+  }
+
+  function wrAutoLiveText(d) {
+    var cfg = d.cfg || {}, au = cfg.auto || {}, aru = cfg.auto_run || {};
+    var liveNote = (d.live_rate === null || d.live_rate === undefined) ? '—' : (esc(d.live_rate) + ' зап/мин');
+    return 'Сейчас: ' + liveNote +
+      '. Последняя проверка: ' + (aru.last_eval ? new Date(aru.last_eval * 1000).toLocaleTimeString('ru-RU') : 'ещё не было') +
+      (aru.rate !== undefined ? (', тогда трафик ' + esc(aru.rate) + ' зап/мин') : '') +
+      (aru.above !== undefined ? (', счётчики: выше порога ' + esc(aru.above) + '/' + esc(au.hold || 3) +
+        ', ниже ' + esc(aru.below) + '/' + esc(au.hold_off || 4)) : '') + '.';
+  }
+
+  function wrAutoLogHtml(d) {
+    var alog = (d.cfg || {}).auto_log || [];
+    if (!alog.length) return '<div class="sl-hint">Журнал авто-режима пуст (авто выключено или ещё не было проверок).</div>';
+    return '<table class="sl-table"><tr><th>Время</th><th>Трафик</th><th>Решение</th><th>Причина</th></tr>' +
+      alog.slice(0, 10).map(function (x) {
+        var act = x.action === 'on' ? '<b class="sl-err">включил</b>' : (x.action === 'off' ? '<b>выключил</b>' : 'ждёт');
+        return '<tr><td>' + (x.ts ? new Date(x.ts * 1000).toLocaleTimeString('ru-RU') : '—') + '</td>' +
+          '<td>' + esc(x.rate) + ' зап/мин</td><td>' + act + '</td><td>' + esc(x.reason) + '</td></tr>';
+      }).join('') + '</table>';
+  }
+
+  function wrRender(d) {
+    var mgt = d.mgt || {}, cfg = d.cfg || {}, st = cfg.state || {};
+    var known = !!(mgt && typeof mgt.is_enabled === 'boolean');
+    var on = !!mgt.is_enabled;
+    var srcNames = { auto: 'авто по нагрузке', schedule: 'расписание', manual: 'вручную', 'manual-retry': 'вручную (повтор)' };
+    var set = function (id, html) { var e = document.getElementById(id); if (e) e.innerHTML = html; };
+    var setTxt = function (id, txt) { var e = document.getElementById(id); if (e) e.textContent = txt; };
+    var last = (d.stats && d.stats.history && d.stats.history[0]) || null;
+    var wrLast = last
+      ? ('последняя активация ' + new Date(last.started_at * 1000).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }))
+      : 'активаций не было';
+    setTxt('sl-wr-head', (known ? (on ? 'включён' : 'выключен') : 'состояние неизвестно') + ' · ' + wrLast);
+    setTxt('sl-wr-limits', 'Лимиты CE: порог ' + (mgt.max_concurrent || '-') + ', таймаут ' +
+      (mgt.session_timeout || '-') + ' с. Страница очереди — наша, с живой позицией.');
+    setTxt('sl-wr-status', known ? (on ? 'включён' : 'выключен') : 'неизвестно');
+    var bits = 'источник: ' + (srcNames[st.source] || 'вручную');
+    if (d.busy) bits += ' · операция выполняется…';
+    if (st.pending === true || st.pending === false) bits += ' · ожидает переключения';
+    setTxt('sl-wr-src', bits);
+    var btn = document.getElementById('sl-wr-toggle');
+    if (btn) {
+      if (WR_BUSY) { btn.disabled = true; }
+      else {
+        btn.textContent = known ? (on ? 'Выключить' : 'Включить') : 'Переключить';
+        btn.disabled = !known;
+      }
+    }
+    if (st.error) wrErr(String(st.error)); else wrErr('');
+    set('sl-wr-kpis', wrKpis(d.stats));
+    set('sl-wr-bars', barsHtml(((d.stats || {}).timeline || []).map(function (x) {
+      return { label: x.date + ' · людей ' + fmtNum(x.queued || 0), count: x.sessions || 0 };
+    })));
+    set('sl-wr-hist', wrHistoryHtml(d.stats && d.stats.history));
+    setTxt('sl-wr-au-live', wrAutoLiveText(d));
+    set('sl-wr-au-log', wrAutoLogHtml(d));
+    setTxt('sl-wr-updated', 'обновлено ' + new Date().toLocaleTimeString('ru-RU'));
+    var sel = document.getElementById('sl-wr-site');
+    if (sel) {
+      var opts = (d.sites || []).map(function (s) {
         var h = (s.hosts || [''])[0];
         return '<option value="' + esc(h) + '"' + (h === d.host ? ' selected' : '') + '>' + esc(h || ('#' + s.id)) + '</option>';
       }).join('');
-      var dayNames = [['1', 'Пн'], ['2', 'Вт'], ['3', 'Ср'], ['4', 'Чт'], ['5', 'Пт'], ['6', 'Сб'], ['7', 'Вс']];
-      var days = dayNames.map(function (x) {
-        return '<label><input type="checkbox" data-wr-day="' + x[0] + '"' +
-          ((sch.days || []).indexOf(parseInt(x[0], 10)) >= 0 ? ' checked' : '') + '> ' + x[1] + '</label>';
-      }).join(' ');
-      var srcNames = { auto: 'авто по нагрузке', schedule: 'расписание', manual: 'вручную', 'manual-retry': 'вручную (повтор)' };
-      var src = srcNames[st.source] || 'вручную';
-      var last = (d.stats && d.stats.history && d.stats.history[0]) || null;
-      var wrStatus = (mgt.is_enabled ? 'включён' : 'выключен');
-      var wrLast = last
-        ? ('последняя активация ' + new Date(last.started_at * 1000).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }))
-        : 'активаций не было';
-      var wrOpen = ' open';
-      var card = el('<div class="sl-card" id="sl-wr-sec">' +
-        '<details class="sl-details"' + wrOpen + '><summary><b>Зал ожидания</b> <span class="sl-badge">SLExt</span> ' +
-        '<span class="sl-hint" style="display:inline;margin:0">' + esc(wrStatus + ' · ' + wrLast) + '</span></summary>' +
-        '<div class="sl-hint">Лимиты CE: порог ' + esc(mgt.max_concurrent || '-') +
-        ', таймаут ' + esc(mgt.session_timeout || '-') + ' с. Страница очереди — наша, с живой позицией.</div>' +
-        '<div class="sl-row"><label>Сайт</label><select class="sl-input" id="sl-wr-site">' + sites + '</select>' +
-        '<span class="sl-badge" id="sl-wr-status">' + (mgt.is_enabled ? 'включён' : 'выключен') + '</span>' +
-        '<span class="sl-hint">источник: ' + esc(src) + '</span>' +
-        '<button class="sl-btn sl-btn-pri" id="sl-wr-toggle">' + (mgt.is_enabled ? 'Выключить' : 'Включить') + '</button>' +
-        '<button class="sl-btn" id="sl-wr-refresh">Обновить</button></div>' +
-        '<div class="sl-kpis">' + wrKpis(d.stats) + '</div>' +
-        '<div class="sl-sub">Активации по дням</div>' +
-        barsHtml((d.stats && d.stats.timeline || []).map(function (x) {
-          return { label: x.date + ' · людей ' + fmtNum(x.queued || 0), count: x.sessions || 0 };
-        })) +
-        '<details class="sl-details"><summary>Автоматизация: расписание, авто-режим, уведомления</summary>' +
-        '<div class="sl-row"><label><input type="checkbox" id="sl-wr-sch-on"' + (sch.enabled ? ' checked' : '') + '> по расписанию</label>' + days + '</div>' +
-        '<div class="sl-row"><label>с</label><input class="sl-input sl-w" id="sl-wr-from" value="' + esc(sch.from) + '">' +
-        '<label>до</label><input class="sl-input sl-w" id="sl-wr-to" value="' + esc(sch.to) + '"></div>' +
-        '<div class="sl-sub">Авто по нагрузке — точный алгоритм (без случайности)</div>' +
-        '<div class="sl-hint">Считается реальный трафик: HTML-запросы живых посетителей (метод GET, боты и служебные пути /.safeline/ исключены) за окно, в запросах/мин. Зал включится только если: авто включено И трафик ≥ порога включения K проверок подряд И прошло ≥ «запрета» с ручного выключения. Выключится только если зал включён самим авто И трафик ≤ порога выключения M проверок подряд И зал проработал ≥ «паузы». Ручное переключение всегда приоритетнее авто (авто его не отменяет).</div>' +
-        '<div class="sl-row"><label data-sl-tip="Автоматика включается только по этим правилам. Ручное переключение всегда приоритетнее."><input type="checkbox" id="sl-wr-au-on"' + (au.enabled ? ' checked' : '') + '> авто по нагрузке</label>' +
-        '<label data-sl-tip="Реальный трафик живых посетителей (HTML-запросы), при котором зал может включиться, в запросах в минуту.">порог вкл, зап/мин</label><input class="sl-input sl-w" id="sl-wr-th" type="number" min="1" value="' + esc(au.threshold) + '">' +
-        '<label data-sl-tip="Трафик, при котором авто-режим выключит зал, в запросах в минуту.">порог выкл, зап/мин</label><input class="sl-input sl-w" id="sl-wr-thoff" type="number" min="0" value="' + esc(au.off_threshold) + '">' +
-        '<label data-sl-tip="За сколько секунд считается трафик для порога.">окно, с</label><input class="sl-input sl-w" id="sl-wr-win" type="number" min="30" value="' + esc(au.window) + '"></div>' +
-        '<div class="sl-row"><label data-sl-tip="Сколько проверок подряд (проверка каждые 30 с) трафик должен держаться выше порога включения.">проверок подряд для вкл</label><input class="sl-input sl-w" id="sl-wr-au-hold" type="number" min="1" value="' + esc(au.hold || 3) + '">' +
-        '<label data-sl-tip="Сколько проверок подряд трафик должен быть ниже порога выключения.">для выкл</label><input class="sl-input sl-w" id="sl-wr-au-holdoff" type="number" min="1" value="' + esc(au.hold_off || 4) + '">' +
-        '<label data-sl-tip="Минимальное время работы зала, прежде чем авто-режим сможет его выключить.">пауза до авто-выкл, с</label><input class="sl-input sl-w" id="sl-wr-cd" type="number" min="30" value="' + esc(au.cooldown) + '">' +
-        '<label data-sl-tip="После ручного выключения авто-режим не включит зал раньше этого времени.">запрет после ручн. выкл, с</label><input class="sl-input sl-w" id="sl-wr-au-minoff" type="number" min="0" value="' + esc(au.min_off || 600) + '"></div>' +
-        '<div class="sl-hint" id="sl-wr-au-live">' + autoLive + '</div>' + autoLogHtml +
-        '<div class="sl-row"><label><input type="checkbox" id="sl-wr-nf"' + (nf.enabled ? ' checked' : '') + '> уведомления</label></div>' +
-        '<div class="sl-row"><button class="sl-btn sl-btn-pri" id="sl-wr-save-ext">Сохранить автоматизацию</button></div></details>' +
-        '<details class="sl-details"><summary>Страница очереди: тексты и стиль</summary>' +
-        '<div class="sl-row"><label>Заголовок</label><input class="sl-input sl-wide" id="sl-wr-p-title" value="' + esc(page.title) + '"></div>' +
-        '<div class="sl-row"><label>Текст</label><input class="sl-input sl-wide" id="sl-wr-p-msg" value="' + esc(page.message) + '"></div>' +
-        '<div class="sl-row"><label>Заметка</label><input class="sl-input sl-wide" id="sl-wr-p-note" value="' + esc(page.note) + '"></div>' +
-        '<div class="sl-row"><label>Подпись счёта</label><input class="sl-input" id="sl-wr-p-post" value="' + esc(page.posttext) + '">' +
-        '<label>Бренд</label><input class="sl-input" id="sl-wr-p-brand" value="' + esc(page.brand) + '">' +
-        '<label>Цвет</label><input class="sl-input sl-w" id="sl-wr-p-color" value="' + esc(page.color) + '">' +
-        '<label><input type="checkbox" id="sl-wr-p-stats"' + (page.show_stats !== false ? ' checked' : '') + '> статистика на странице</label></div>' +
-        '<div class="sl-row"><button class="sl-btn sl-btn-pri" id="sl-wr-p-save">Сохранить страницу</button>' +
-        '<button class="sl-btn" id="sl-wr-p-preview">Превью</button></div></details>' +
-        '<details class="sl-details"><summary>История активаций</summary>' + wrHistoryHtml(d.stats && d.stats.history) + '</details>' +
-        '</details></div>');
-      host.appendChild(card);
-      lockBtn(card, 'sl-wr-toggle', 'wr.control');
-      lockBtn(card, 'sl-wr-save-ext', 'wr.settings');
-      lockBtn(card, 'sl-wr-p-save', 'wr.settings');
-      card.addEventListener('click', function (e) {
-        var siteEl = document.getElementById('sl-wr-site');
-        var site = siteEl ? siteEl.value : d.host;
-        if (e.target.id === 'sl-wr-toggle') {
-          var cur = (document.getElementById('sl-wr-status') || {}).textContent === 'включён';
-          api('/api/waiting/config', { method: 'POST', body: { site: site, enabled: !cur } }).then(function (r) {
-            toast(r.ok ? ('Зал ожидания ' + (!cur ? 'включён' : 'выключен')) : ('Ошибка: ' + (r.error || '')), !r.ok);
-            if (r.ok) setTimeout(function () { refreshWrCard(); slStatus(); }, 900);
-          });
-          return;
-        }
-        if (e.target.id === 'sl-wr-refresh') { refreshWrCard(); return; }
-        if (e.target.id === 'sl-wr-save-ext') {
-          var dd = [];
-          document.querySelectorAll('[data-wr-day]').forEach(function (c) { if (c.checked) dd.push(parseInt(c.getAttribute('data-wr-day'), 10)); });
-          api('/api/waiting/extras', { method: 'POST', body: { site: site,
-            schedule: { enabled: document.getElementById('sl-wr-sch-on').checked, days: dd,
-                        from: document.getElementById('sl-wr-from').value, to: document.getElementById('sl-wr-to').value },
-            auto: { enabled: document.getElementById('sl-wr-au-on').checked,
-                    threshold: parseInt(document.getElementById('sl-wr-th').value, 10) || 60,
-                    off_threshold: parseInt(document.getElementById('sl-wr-thoff').value, 10) || 20,
-                    window: parseInt(document.getElementById('sl-wr-win').value, 10) || 60,
-                    hold: parseInt(document.getElementById('sl-wr-au-hold').value, 10) || 3,
-                    hold_off: parseInt(document.getElementById('sl-wr-au-holdoff').value, 10) || 4,
-                    cooldown: parseInt(document.getElementById('sl-wr-cd').value, 10) || 600,
-                    min_off: parseInt(document.getElementById('sl-wr-au-minoff').value, 10) || 600 },
-            notify: { enabled: document.getElementById('sl-wr-nf').checked } } })
-            .then(function (r) {
-              toast(r.ok ? 'Автоматизация сохранена' : 'Ошибка', !r.ok);
-              if (r.ok) setTimeout(function () { location.reload(); }, 600);
-            });
-          return;
-        }
-        if (e.target.id === 'sl-wr-p-save' || e.target.id === 'sl-wr-p-preview') {
-          var body = { site: site, page: {
-            title: document.getElementById('sl-wr-p-title').value,
-            message: document.getElementById('sl-wr-p-msg').value,
-            note: document.getElementById('sl-wr-p-note').value,
-            posttext: document.getElementById('sl-wr-p-post').value,
-            brand: document.getElementById('sl-wr-p-brand').value,
-            color: document.getElementById('sl-wr-p-color').value,
-            show_stats: document.getElementById('sl-wr-p-stats').checked
-          } };
-          if (e.target.id === 'sl-wr-p-preview') {
-            var w = window.open('', '_blank');
-            api('/api/waiting/page', { method: 'POST', body: Object.assign({ preview: 1 }, body) })
-              .then(function (r) { if (w && r.html) { w.document.write(r.html); w.document.close(); } });
-          } else {
-            api('/api/waiting/page', { method: 'POST', body: body })
-              .then(function (r) { toast(r.ok ? 'Страница очереди обновлена' : ('Ошибка: ' + (r.info || '')), !r.ok); });
+      if (sel.innerHTML !== opts) sel.innerHTML = opts;
+      WR_SITE = d.host || WR_SITE;
+    }
+  }
+
+  function wrBuild(d) {
+    var cfg = d.cfg || {};
+    var page = cfg.page || {}, sch = cfg.schedule || {}, au = cfg.auto || {}, nf = cfg.notify || {};
+    var dayNames = [['1', 'Пн'], ['2', 'Вт'], ['3', 'Ср'], ['4', 'Чт'], ['5', 'Пт'], ['6', 'Сб'], ['7', 'Вс']];
+    var days = dayNames.map(function (x) {
+      return '<label><input type="checkbox" data-wr-day="' + x[0] + '"' +
+        ((sch.days || []).indexOf(parseInt(x[0], 10)) >= 0 ? ' checked' : '') + '> ' + x[1] + '</label>';
+    }).join(' ');
+    var card = el('<div class="sl-card" id="sl-wr-sec">' +
+      '<details class="sl-details" open><summary><b>Зал ожидания</b> <span class="sl-badge">SLExt</span> ' +
+      '<span class="sl-hint" style="display:inline;margin:0" id="sl-wr-head">загрузка…</span></summary>' +
+      '<div class="sl-hint" id="sl-wr-limits"></div>' +
+      '<div class="sl-row"><label>Сайт</label><select class="sl-input" id="sl-wr-site"></select>' +
+      '<span class="sl-badge" id="sl-wr-status">—</span>' +
+      '<span class="sl-hint" id="sl-wr-src"></span>' +
+      '<button class="sl-btn sl-btn-pri" id="sl-wr-toggle">…</button>' +
+      '<button class="sl-btn" id="sl-wr-refresh">Обновить</button></div>' +
+      '<div class="sl-err" id="sl-wr-err" style="display:none"></div>' +
+      '<div class="sl-kpis" id="sl-wr-kpis"></div>' +
+      '<div class="sl-sub">Активации по дням</div><div id="sl-wr-bars"></div>' +
+      '<div class="sl-hint" id="sl-wr-updated"></div>' +
+      '<details class="sl-details"><summary>Автоматизация: расписание, авто-режим, уведомления</summary>' +
+      '<div class="sl-row"><label><input type="checkbox" id="sl-wr-sch-on"' + (sch.enabled ? ' checked' : '') + '> по расписанию</label>' + days + '</div>' +
+      '<div class="sl-row"><label>с</label><input class="sl-input sl-w" id="sl-wr-from" value="' + esc(sch.from) + '">' +
+      '<label>до</label><input class="sl-input sl-w" id="sl-wr-to" value="' + esc(sch.to) + '"></div>' +
+      '<div class="sl-sub">Авто по нагрузке — точный алгоритм (без случайности)</div>' +
+      '<div class="sl-hint">Считается реальный трафик: HTML-запросы живых посетителей (GET, боты и служебные пути исключены) за окно, в запросах/мин. Включение: авто включено И трафик ≥ порога K проверок подряд И прошло ≥ «запрета» с ручного выключения. Выключение: зал включён самим авто И трафик ≤ порога M проверок подряд И зал проработал ≥ «паузы». Ручное переключение всегда приоритетнее авто.</div>' +
+      '<div class="sl-row"><label data-sl-tip="Автоматика включается только по этим правилам. Ручное переключение всегда приоритетнее."><input type="checkbox" id="sl-wr-au-on"' + (au.enabled ? ' checked' : '') + '> авто по нагрузке</label>' +
+      '<label data-sl-tip="Реальный трафик живых посетителей (HTML-запросы), при котором зал может включиться, в запросах в минуту.">порог вкл, зап/мин</label><input class="sl-input sl-w" id="sl-wr-th" type="number" min="1" value="' + esc(au.threshold) + '">' +
+      '<label data-sl-tip="Трафик, при котором авто-режим выключит зал, в запросах в минуту.">порог выкл, зап/мин</label><input class="sl-input sl-w" id="sl-wr-thoff" type="number" min="0" value="' + esc(au.off_threshold) + '">' +
+      '<label data-sl-tip="За сколько секунд считается трафик для порога.">окно, с</label><input class="sl-input sl-w" id="sl-wr-win" type="number" min="30" value="' + esc(au.window) + '"></div>' +
+      '<div class="sl-row"><label data-sl-tip="Сколько проверок подряд (проверка каждые 20 с) трафик должен держаться выше порога включения.">проверок подряд для вкл</label><input class="sl-input sl-w" id="sl-wr-au-hold" type="number" min="1" value="' + esc(au.hold || 3) + '">' +
+      '<label data-sl-tip="Сколько проверок подряд трафик должен быть ниже порога выключения.">для выкл</label><input class="sl-input sl-w" id="sl-wr-au-holdoff" type="number" min="1" value="' + esc(au.hold_off || 4) + '">' +
+      '<label data-sl-tip="Минимальное время работы зала, прежде чем авто-режим сможет его выключить.">пауза до авто-выкл, с</label><input class="sl-input sl-w" id="sl-wr-cd" type="number" min="30" value="' + esc(au.cooldown) + '">' +
+      '<label data-sl-tip="После ручного выключения авто-режим не включит зал раньше этого времени.">запрет после ручн. выкл, с</label><input class="sl-input sl-w" id="sl-wr-au-minoff" type="number" min="0" value="' + esc(au.min_off || 600) + '"></div>' +
+      '<div class="sl-hint" id="sl-wr-au-live"></div><div id="sl-wr-au-log"></div>' +
+      '<div class="sl-row"><label><input type="checkbox" id="sl-wr-nf"' + (nf.enabled ? ' checked' : '') + '> уведомления</label></div>' +
+      '<div class="sl-row"><button class="sl-btn sl-btn-pri" id="sl-wr-save-ext">Сохранить автоматизацию</button></div></details>' +
+      '<details class="sl-details"><summary>Страница очереди: тексты и стиль</summary>' +
+      '<div class="sl-row"><label>Заголовок</label><input class="sl-input sl-wide" id="sl-wr-p-title" value="' + esc(page.title) + '"></div>' +
+      '<div class="sl-row"><label>Текст</label><input class="sl-input sl-wide" id="sl-wr-p-msg" value="' + esc(page.message) + '"></div>' +
+      '<div class="sl-row"><label>Заметка</label><input class="sl-input sl-wide" id="sl-wr-p-note" value="' + esc(page.note) + '"></div>' +
+      '<div class="sl-row"><label>Подпись счёта</label><input class="sl-input" id="sl-wr-p-post" value="' + esc(page.posttext) + '">' +
+      '<label>Бренд</label><input class="sl-input" id="sl-wr-p-brand" value="' + esc(page.brand) + '">' +
+      '<label>Цвет</label><input class="sl-input sl-w" id="sl-wr-p-color" value="' + esc(page.color) + '">' +
+      '<label><input type="checkbox" id="sl-wr-p-stats"' + (page.show_stats !== false ? ' checked' : '') + '> статистика на странице</label></div>' +
+      '<div class="sl-row"><button class="sl-btn sl-btn-pri" id="sl-wr-p-save">Сохранить страницу</button>' +
+      '<button class="sl-btn" id="sl-wr-p-preview">Превью</button></div></details>' +
+      '<details class="sl-details"><summary>История активаций</summary><div id="sl-wr-hist"></div></details>' +
+      '</details></div>');
+    var old = document.getElementById('sl-wr-sec');
+    if (old) old.remove();
+    WR_BOX.appendChild(card);
+    lockBtn(card, 'sl-wr-toggle', 'wr.control');
+    lockBtn(card, 'sl-wr-save-ext', 'wr.settings');
+    lockBtn(card, 'sl-wr-p-save', 'wr.settings');
+    card.addEventListener('click', function (e) {
+      var site = WR_LAST ? WR_LAST.host : WR_SITE;
+      if (e.target.id === 'sl-wr-toggle') {
+        var b = e.target;
+        var cur = !!(WR_LAST && WR_LAST.mgt && WR_LAST.mgt.is_enabled);
+        var want = !cur;
+        WR_BUSY = true;
+        b.disabled = true;
+        b.textContent = want ? 'Включаю…' : 'Выключаю…';
+        api('/api/waiting/config', { method: 'POST', body: { site: site, enabled: want } }).then(function (r) {
+          WR_BUSY = false;
+          b.disabled = false;
+          b.textContent = want ? 'Выключить' : 'Включить';
+          toast(r.ok ? ('Зал ожидания ' + (want ? 'включён' : 'выключен')) : ('Ошибка: ' + (r.error || 'не удалось')), !r.ok);
+          if (r.ok && r.mgt_ok && WR_LAST) {
+            WR_LAST.mgt = r.mgt;
+            WR_LAST.mgt_ok = true;
+            wrRender(WR_LAST);
           }
+          wrLoad(false);
+        });
+        return;
+      }
+      if (e.target.id === 'sl-wr-refresh') { wrLoad(false); return; }
+      if (e.target.id === 'sl-wr-site') {
+        WR_SITE = e.target.value;
+        removeSection('sl-wr-sec');
+        wrStopPoll();
+        if (SL_TAB === 'wr') renderWorkspaceTab();
+        return;
+      }
+      if (e.target.id === 'sl-wr-save-ext') {
+        var dd = [];
+        document.querySelectorAll('[data-wr-day]').forEach(function (c) { if (c.checked) dd.push(parseInt(c.getAttribute('data-wr-day'), 10)); });
+        api('/api/waiting/extras', { method: 'POST', body: { site: site,
+          schedule: { enabled: document.getElementById('sl-wr-sch-on').checked, days: dd,
+                      from: document.getElementById('sl-wr-from').value, to: document.getElementById('sl-wr-to').value },
+          auto: { enabled: document.getElementById('sl-wr-au-on').checked,
+                  threshold: parseInt(document.getElementById('sl-wr-th').value, 10) || 60,
+                  off_threshold: parseInt(document.getElementById('sl-wr-thoff').value, 10) || 20,
+                  window: parseInt(document.getElementById('sl-wr-win').value, 10) || 60,
+                  hold: parseInt(document.getElementById('sl-wr-au-hold').value, 10) || 3,
+                  hold_off: parseInt(document.getElementById('sl-wr-au-holdoff').value, 10) || 4,
+                  cooldown: parseInt(document.getElementById('sl-wr-cd').value, 10) || 600,
+                  min_off: parseInt(document.getElementById('sl-wr-au-minoff').value, 10) || 600 },
+          notify: { enabled: document.getElementById('sl-wr-nf').checked } } })
+          .then(function (r) {
+            toast(r.ok ? 'Автоматизация сохранена' : ('Ошибка: ' + (r.error || '')), !r.ok);
+            if (r.ok) wrLoad(false);
+          });
+        return;
+      }
+      if (e.target.id === 'sl-wr-p-save' || e.target.id === 'sl-wr-p-preview') {
+        var body = { site: site, page: {
+          title: document.getElementById('sl-wr-p-title').value,
+          message: document.getElementById('sl-wr-p-msg').value,
+          note: document.getElementById('sl-wr-p-note').value,
+          posttext: document.getElementById('sl-wr-p-post').value,
+          brand: document.getElementById('sl-wr-p-brand').value,
+          color: document.getElementById('sl-wr-p-color').value,
+          show_stats: document.getElementById('sl-wr-p-stats').checked
+        } };
+        if (e.target.id === 'sl-wr-p-preview') {
+          var w = window.open('', '_blank');
+          api('/api/waiting/page', { method: 'POST', body: Object.assign({ preview: 1 }, body) })
+            .then(function (r) { if (w && r.html) { w.document.write(r.html); w.document.close(); } });
+        } else {
+          api('/api/waiting/page', { method: 'POST', body: body })
+            .then(function (r) { toast(r.ok ? 'Страница очереди обновлена' : ('Ошибка: ' + (r.info || '')), !r.ok); });
         }
-      });
+      }
     });
+  }
+
+  function renderWaitingCard(box) {
+    if (!box) return;
+    WR_BOX = box;
+    if (document.getElementById('sl-wr-sec')) {
+      if (!WR_TIMER) wrSchedule(1000);
+      return;
+    }
+    WR_BOX.appendChild(el('<div class="sl-card" id="sl-wr-sec">' +
+      '<div class="sl-hint">Загрузка зала ожидания…</div>' +
+      '<div class="sl-err" id="sl-wr-err" style="display:none"></div></div>'));
+    wrLoad(true);
   }
 
   /* ------------------------------ load test ------------------------------ */

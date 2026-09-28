@@ -35,6 +35,9 @@ jobs:
       - name: Синтаксис Python
         run: python3 -m py_compile bin/*.py
 
+      - name: Тесты политики зала ожидания
+        run: python3 tests/wr_policy_test.py
+
       - name: Синтаксис JavaScript
         run: node --check www/ext.js
 

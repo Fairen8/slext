@@ -27,6 +27,8 @@ from string import Template
 
 import psycopg2
 
+from wr_policy import clamp_int, wr_auto_decision  # noqa: E402
+
 VERSION = '3.0'
 BASE = '/opt/slext'
 STATE_FILE = os.path.join(BASE, 'conf', 'state.json')
@@ -206,13 +208,6 @@ SSL_CTX.verify_mode = ssl.CERT_NONE
 
 def db():
     return psycopg2.connect(**PG)
-
-
-def clamp_int(v, lo, hi, default):
-    try:
-        return max(lo, min(hi, int(v)))
-    except (TypeError, ValueError):
-        return default
 
 
 def default_state():
@@ -1349,15 +1344,48 @@ MGT_BASE = 'https://127.0.0.1:9443'
 _SITE_CACHE = {'at': 0, 'sites': []}
 
 
+def _jwt_payload(tok):
+    try:
+        payload = str(tok).split('.')[1]
+        payload += '=' * (-len(payload) % 4)
+        return json.loads(base64.urlsafe_b64decode(payload.encode()).decode('utf-8', 'replace'))
+    except Exception:
+        return {}
+
+
+def _jwt_username(tok):
+    return str(_jwt_payload(tok).get('Username') or '')
+
+
+_MGT_TOKEN_CACHE = {'tok': '', 'at': 0}
+
+
 def mgt_token():
+    """Токен панели, который реально принимает mgt (кеш 5 минут).
+
+    Часть токенов mgt отклоняет (несогласованное 2FA-состояние и т.п.),
+    поэтому кандидат проверяется живым запросом; приоритет — admin.
+    """
+    now = time.time()
+    cached = _MGT_TOKEN_CACHE['tok']
+    if cached and now - _MGT_TOKEN_CACHE['at'] < 300:
+        return cached
     try:
         with db() as conn, conn.cursor() as c:
             c.execute('SELECT token FROM mgt_auth_token WHERE (expire IS NULL OR expire = 0 OR expire > %s) '
-                      'ORDER BY id DESC LIMIT 1', (int(time.time()),))
-            row = c.fetchone()
-        return row[0] if row else ''
+                      'ORDER BY id DESC LIMIT 30', (int(time.time()),))
+            rows = [r[0] for r in c.fetchall()]
     except Exception:
         return ''
+    if not rows:
+        return ''
+    ordered = sorted(rows, key=lambda t: 0 if _jwt_username(t) == 'admin' else 1)
+    for tok in ordered[:10]:
+        code, _ = mgt_request('GET', '/api/business/account', token=tok)
+        if code == 200:
+            _MGT_TOKEN_CACHE.update({'tok': tok, 'at': now})
+            return tok
+    return ordered[0]
 
 
 def mgt_request(method, path, body=None, token=None):
@@ -1418,15 +1446,187 @@ def waiting_conf(site_id, token=None):
 
 
 def waiting_set_enabled(site_id, enabled, token=None):
-    for _ in range(3):
+    """POST + подтверждение факта. Возвращает (ok, conf, error)."""
+    last_err = ''
+    for attempt in range(3):
         code, data = mgt_request('POST', '/api/open/site/%d/waiting' % site_id,
                                  {'is_enabled': bool(enabled)}, token=token)
-        if code == 200:
+        if code != 200:
+            msg = ''
+            if isinstance(data, dict):
+                msg = str(data.get('msg') or data.get('error') or '')
+            last_err = msg or ('SafeLine ответил HTTP %s' % code)
+        for _ in range(6):
+            time.sleep(0.5)
             conf = waiting_conf(site_id, token=token)
             if bool(conf.get('is_enabled')) == bool(enabled):
-                return True
-        time.sleep(1.5)
-    return False
+                MGT_CONF_CACHE[site_id] = (time.time(), conf)
+                return True, conf, ''
+        if not last_err:
+            last_err = 'SafeLine не подтвердил переключение'
+    return False, waiting_conf(site_id, token=token), last_err
+
+
+MGT_CONF_CACHE = {}
+WR_OP_LOCK = threading.Lock()
+WR_PATCH = {'ts': 0, 'ok': None, 'info': '', 'running': False}
+WR_SESSIONS = {}
+
+
+def mgt_conf_cached(site_id, ttl=5.0):
+    now = time.time()
+    ts, conf = MGT_CONF_CACHE.get(site_id, (0, {}))
+    if conf and now - ts < ttl:
+        return conf
+    conf = waiting_conf(site_id)
+    if conf:
+        MGT_CONF_CACHE[site_id] = (now, conf)
+    return conf
+
+
+def mgt_conf_forget(site_id):
+    MGT_CONF_CACHE.pop(site_id, None)
+
+
+def _wr_cfg(host):
+    with LOCK:
+        return json.loads(json.dumps(((STATE.get('waiting') or {}).get('sites') or {}).get(host) or {}))
+
+
+def _wr_state_patch(host, patch):
+    with LOCK:
+        sites = STATE.setdefault('waiting', {}).setdefault('sites', {})
+        st = sites.setdefault(host, {}).setdefault('state', {})
+        st.update(patch)
+        save_state(STATE)
+
+
+def site_patch_fast():
+    """Быстрое восстановление патчей сайта после перегенерации конфига SafeLine."""
+    try:
+        sdir = os.path.join(NGINX_ROOT, 'sites-enabled')
+        files = []
+        for fn in sorted(os.listdir(sdir)):
+            if not fn.startswith('IF_') or fn.endswith(('.orig', '.bak', '.slext-orig')):
+                continue
+            p = os.path.join(sdir, fn)
+            files.append(p)
+            try:
+                txt = open(p, encoding='utf-8', errors='replace').read()
+            except OSError:
+                continue
+            orig = txt
+            if 'access_log /var/log/nginx/access.log safeline' not in txt:
+                txt = re.sub(r'(^[ \t]*server_name .*;\n)',
+                             r'\1    access_log /var/log/nginx/access.log safeline;\n',
+                             txt, count=1, flags=re.M)
+            if 'slext-geo/check.conf' not in txt:
+                txt = re.sub(r'(^[ \t]*server_name .*;\n)',
+                             r'\1    include /etc/nginx/slext-geo/check.conf;\n',
+                             txt, count=1, flags=re.M)
+            if txt != orig:
+                try:
+                    open(p, 'w', encoding='utf-8').write(txt)
+                except OSError:
+                    pass
+        rc, out, err = run(['python3', PAGE_PATCH] + files, timeout=60)
+        if rc != 0:
+            return False, (err or out)[:300]
+        rc, out, err = run(['docker', 'exec', 'safeline-tengine', 'nginx', '-t'], timeout=60)
+        if rc != 0:
+            return False, (err or out)[:300]
+        run(['docker', 'exec', 'safeline-tengine', 'nginx', '-s', 'reload'], timeout=60)
+        return True, 'ok'
+    except Exception as e:
+        return False, str(e)[:300]
+
+
+def site_patch_ensure(delay=1.2):
+    """Фоновое восстановление патчей; повторные вызовы схлопываются."""
+    with LOCK:
+        if WR_PATCH.get('running'):
+            return
+        WR_PATCH['running'] = True
+
+    def _job():
+        try:
+            time.sleep(delay)
+            ok, info = site_patch_fast()
+            with LOCK:
+                WR_PATCH.update({'ts': int(time.time()), 'ok': ok, 'info': (info or '')[:300]})
+                save_state(STATE)
+        except Exception:
+            pass
+        finally:
+            with LOCK:
+                WR_PATCH['running'] = False
+
+    threading.Thread(target=_job, daemon=True).start()
+
+
+def site_markers_ok():
+    try:
+        sdir = os.path.join(NGINX_ROOT, 'sites-enabled')
+        for fn in os.listdir(sdir):
+            if not fn.startswith('IF_') or fn.endswith(('.orig', '.bak', '.slext-orig')):
+                continue
+            try:
+                txt = open(os.path.join(sdir, fn), encoding='utf-8', errors='replace').read()
+            except OSError:
+                return False
+            if 'slext-page' not in txt or 'slext-gate' not in txt:
+                return False
+        return True
+    except OSError:
+        return False
+
+
+def wr_read_actual(site_id, token=None, tries=3, pause=0.4):
+    """Чтение фактического состояния зала. -> (ok, actual|None, conf)"""
+    for _ in range(max(1, tries)):
+        conf = waiting_conf(site_id, token=token)
+        if conf:
+            return True, bool(conf.get('is_enabled')), conf
+        time.sleep(pause)
+    return False, None, {}
+
+
+def wr_apply(host, site_id, desired, source, token=None, notify_change=True):
+    """Единая точка переключения зала: mgt + состояние + фоновое восстановление патчей."""
+    desired = bool(desired)
+    if not WR_OP_LOCK.acquire(timeout=20):
+        return {'ok': False, 'error': 'переключение уже выполняется, повторите через пару секунд'}
+    try:
+        cfg = _wr_cfg(host)
+        notify_on = bool((cfg.get('notify') or {}).get('enabled', True))
+        mgt_conf_forget(site_id)
+        okr, actual, conf0 = wr_read_actual(site_id, token=token)
+        if not okr:
+            return {'ok': False, 'error': 'SafeLine недоступен: не удалось прочитать состояние зала'}
+        if actual == desired:
+            _wr_state_patch(host, {'enabled': actual, 'source': source,
+                                   'pending': None, 'error': '', 'error_at': 0})
+            return {'ok': True, 'actual': actual, 'changed': False, 'mgt': conf0}
+        ok, conf, err = waiting_set_enabled(site_id, desired, token=token)
+        if not ok:
+            _wr_state_patch(host, {'pending': desired, 'pending_source': source,
+                                   'error': err, 'error_at': int(time.time())})
+            return {'ok': False, 'error': err,
+                    'actual': (bool(conf.get('is_enabled')) if conf else None)}
+        ts = int(time.time())
+        patch = {'enabled': desired, 'source': source, 'changed_at': ts,
+                 'pending': None, 'pending_source': '', 'pending_tries': 0,
+                 'error': '', 'error_at': 0}
+        if source in ('manual', 'manual-retry'):
+            patch['manual_at'] = ts
+        _wr_state_patch(host, patch)
+        site_patch_ensure(delay=0.8)
+        if notify_change and notify_on:
+            notify_send('SLExt: зал ожидания на %s %s (источник: %s)' %
+                        (host, 'включён' if desired else 'выключен', source))
+        return {'ok': True, 'actual': desired, 'changed': True, 'mgt': conf}
+    finally:
+        WR_OP_LOCK.release()
 
 
 def waiting_stats(site_id, days=30):
@@ -1542,22 +1742,21 @@ p{color:var(--muted);line-height:1.65;margin:0 0 16px;font-size:15px}
   function ready(){if(done)return;done=true;elMsg.textContent=T.ready;elPos.textContent='\\u2713';elDots.style.display='none';setTimeout(function(){location.reload();},2500);}
   function render(d){if(!d||typeof d.pos!=='number'||typeof d.total!=='number')return;elPos.textContent=d.pos;elTotal.textContent=d.total;if(d.pos===0)ready();}
   function conn(){elMsg.textContent=T.conn;}
-  function poll(){fetch('/.safeline/api/waiting/query',{cache:'no-store'}).then(function(r){if(r.status!==200)throw 0;return r.json();})
-    .then(function(j){if(j&&j.data){render(j.data);if(!done)setTimeout(poll,3000);}else conn();})
-    .catch(function(){conn();setTimeout(poll,3000);});}
+  var delay=2500, fails=0;
+  function schedule(ms){setTimeout(poll,ms);}
+  function poll(){
+    if(document.hidden){schedule(10000);return;}
+    fetch('/.safeline/api/waiting/query',{cache:'no-store'}).then(function(r){if(r.status!==200)throw 0;return r.json();})
+      .then(function(j){fails=0;if(j&&j.data){render(j.data);if(!done)schedule(2500);}else{conn();schedule(5000);}})
+      .catch(function(){fails++;conn();schedule(Math.min(15000,3000+fails*2000));});
+  }
   if(SITE && location.hostname!==SITE){
     /* preview mode: no live queue */
   }else if(/(?:^|;\\s*)sl-waiting-state=full/.test(document.cookie)){
     elMsg.textContent=T.full;elPos.textContent='\\u2014';elDots.style.display='none';
   }else{
-    try{
-      var ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/.safeline/api/waiting/ws');
-      var opened=false;
-      ws.addEventListener('open',function(){opened=true;});
-      ws.addEventListener('message',function(e){try{render(JSON.parse(e.data));}catch(_){}});
-      ws.addEventListener('error',function(){if(!opened)poll();});
-      ws.addEventListener('close',function(){if(!opened)poll();});
-    }catch(e){poll();}
+    poll();
+    document.addEventListener('visibilitychange',function(){if(!document.hidden&&!done)schedule(800);});
   }
   $stats
 })();
@@ -1626,21 +1825,6 @@ def waiting_page_html(host, cfg, panel_base=''):
         hostjs=re.sub(r'[^A-Za-z0-9_.\-]', '', host)[:120])
 
 
-def waiting_state_set(host, enabled, source):
-    with LOCK:
-        sites = STATE.setdefault('waiting', {}).setdefault('sites', {})
-        cfg = sites.setdefault(host, {})
-        st = cfg.setdefault('state', {})
-        old = bool(st.get('enabled'))
-        st['enabled'] = bool(enabled)
-        st['source'] = source
-        st['changed_at'] = int(time.time())
-        if source in ('manual', 'manual-retry'):
-            st['manual_at'] = int(time.time())
-        save_state(STATE)
-    return old
-
-
 STATIC_RX = re.compile(r'\.(js|css|png|jpe?g|gif|webp|svg|ico|woff2?|ttf|eot|map|json|txt|xml|mp4|webm)(\?|$)', re.I)
 RATE_CACHE = {'at': 0, 'window': 0, 'value': 0}
 
@@ -1673,141 +1857,133 @@ def real_rate_pm(window):
     return value
 
 
+def _wr_log_event(host, action, reason, rate):
+    with LOCK:
+        c2 = STATE.setdefault('waiting', {}).setdefault('sites', {}).setdefault(host, {})
+        log = c2.setdefault('auto_log', [])
+        log.insert(0, {'ts': int(time.time()), 'rate': rate, 'action': action, 'reason': reason})
+        del log[20:]
+
+
+def _wr_sync_sessions(site, host, notify_on):
+    try:
+        with db() as conn, conn.cursor() as c:
+            c.execute('SELECT COALESCE(MAX(id), 0) FROM mgt_wr_stat_log WHERE site_id=%s', (site['id'],))
+            maxid = c.fetchone()[0]
+            if maxid > int(WR_SESSIONS.get(host, maxid)):
+                c.execute('SELECT id, total_waiting, top_waiting, total_serving, avg_wait_sec, '
+                          'bounce_rate, dur_sec FROM mgt_wr_stat_log WHERE site_id=%s AND id > %s '
+                          'ORDER BY id ASC LIMIT 5', (site['id'], int(WR_SESSIONS.get(host, maxid))))
+                for r in c.fetchall():
+                    if notify_on:
+                        notify_send('SLExt: зал ожидания %s — сессия завершена\n'
+                                    'В очереди: %s, пик: %s, обслужено: %s\nСреднее ожидание: %s с, '
+                                    'отказы: %s%%, длительность: %s с' %
+                                    (host, r[1], r[2], r[3], r[4], round(float(r[5] or 0) * 100, 1), r[6]))
+            WR_SESSIONS[host] = maxid
+    except Exception:
+        pass
+
+
+def _wr_tick(first=False):
+    with LOCK:
+        hosts = list(((STATE.get('waiting') or {}).get('sites') or {}).keys())
+    if not hosts:
+        return
+    if not WR_PATCH.get('running') and not site_markers_ok():
+        site_patch_ensure(delay=0.2)
+    for host in hosts:
+        site = site_by_host(host)
+        if not site:
+            continue
+        cfg = waiting_cfg(host)
+        st = cfg.get('state') or {}
+        okr, actual, _cf = wr_read_actual(site['id'], tries=3 if first else 1)
+        if not okr:
+            continue
+        pending = st.get('pending')
+        if pending is not None:
+            if bool(pending) == actual:
+                _wr_state_patch(host, {'pending': None, 'pending_source': '', 'pending_tries': 0,
+                                       'enabled': actual, 'error': '', 'error_at': 0})
+            else:
+                tries = int(st.get('pending_tries') or 0)
+                if tries >= 5:
+                    _wr_state_patch(host, {'pending': None, 'pending_source': '', 'pending_tries': 0,
+                                           'error': 'не удалось переключить зал (5 попыток): ' +
+                                                    str(st.get('error') or ''),
+                                           'error_at': int(time.time())})
+                elif time.time() >= int(st.get('retry_at') or 0) and not WR_OP_LOCK.locked():
+                    res = wr_apply(host, site['id'], bool(pending),
+                                   str(st.get('pending_source') or 'manual-retry'),
+                                   token=None, notify_change=False)
+                    if res.get('ok'):
+                        _wr_state_patch(host, {'pending_tries': 0})
+                    else:
+                        _wr_state_patch(host, {'retry_at': int(time.time()) + 30,
+                                               'pending_tries': tries + 1})
+            continue
+        if bool(st.get('enabled')) != actual:
+            _wr_state_patch(host, {'enabled': actual, 'error': '', 'error_at': 0})
+            st = dict(st)
+            st['enabled'] = actual
+        desired, source = None, ''
+        sch = cfg.get('schedule') or {}
+        if sch.get('enabled'):
+            try:
+                hm = time.strftime('%H:%M')
+                days = sch.get('days') or []
+                dow = int(time.strftime('%u'))
+                active = (dow in days) and (str(sch.get('from', '00:00')) <= hm <= str(sch.get('to', '23:59')))
+                if bool(active) != actual:
+                    desired, source = bool(active), 'schedule'
+            except Exception:
+                pass
+        au = cfg.get('auto') or {}
+        if desired is None and au.get('enabled') and not WR_OP_LOCK.locked():
+            try:
+                window = clamp_int(au.get('window'), 30, 3600, 60)
+                rate = real_rate_pm(window)
+                run = cfg.get('auto_run') or {}
+                merged = {'above': run.get('above'), 'below': run.get('below'),
+                          'manual_at': st.get('manual_at'), 'changed_at': st.get('changed_at'),
+                          'source': st.get('source')}
+                dec, action, reason, counters = wr_auto_decision(au, merged, actual, rate, time.time())
+                with LOCK:
+                    STATE.setdefault('waiting', {}).setdefault('sites', {}).setdefault(host, {})['auto_run'] = counters
+                if action != 'wait':
+                    _wr_log_event(host, action, reason, rate)
+                if dec is not None:
+                    desired, source = dec, 'auto'
+            except Exception:
+                pass
+        if desired is not None and bool(desired) != actual:
+            wr_apply(host, site['id'], desired, source, token=None)
+        _wr_sync_sessions(site, host, bool((cfg.get('notify') or {}).get('enabled', True)))
+    with LOCK:
+        save_state(STATE)
+
+
+def wr_startup():
+    try:
+        page_apply()
+    except Exception:
+        pass
+    try:
+        _wr_tick(True)
+    except Exception:
+        pass
+
+
 def waiting_worker():
-    last_sessions = {}
+    first = True
     while True:
         try:
-            with LOCK:
-                wt = json.loads(json.dumps(STATE.get('waiting') or {}))
-            notify_on = True
-            for host, saved in (wt.get('sites') or {}).items():
-                cfg = waiting_cfg(host)
-                site = site_by_host(host)
-                if not site:
-                    continue
-                notify_on = bool(cfg['notify'].get('enabled', True))
-                conf = waiting_conf(site['id'])
-                actual = bool(conf.get('is_enabled'))
-                desired = actual
-                source = 'manual'
-                now = time.time()
-                stt = (cfg.get('state') or {})
-                sch = cfg.get('schedule') or {}
-                if stt.get('pending') is not None and bool(stt.get('pending')) != actual:
-                    desired = bool(stt['pending'])
-                    source = 'manual-retry'
-                else:
-                    if sch.get('enabled'):
-                        try:
-                            hm = time.strftime('%H:%M')
-                            days = sch.get('days') or []
-                            dow = int(time.strftime('%u'))
-                            active = (dow in days) and (str(sch.get('from', '00:00')) <= hm <= str(sch.get('to', '23:59')))
-                            if active != actual:
-                                desired = active
-                                source = 'schedule'
-                        except Exception:
-                            pass
-                    au = cfg.get('auto') or {}
-                    if au.get('enabled') and source == 'manual':
-                        try:
-                            window = clamp_int(au.get('window'), 30, 3600, 60)
-                            thr = clamp_int(au.get('threshold'), 1, 10 ** 6, 60)
-                            off = clamp_int(au.get('off_threshold'), 0, thr, min(20, thr))
-                            hold = clamp_int(au.get('hold'), 1, 20, 3)
-                            hold_off = clamp_int(au.get('hold_off'), 1, 60, 4)
-                            cool = clamp_int(au.get('cooldown'), 30, 86400, 600)
-                            min_off = clamp_int(au.get('min_off'), 0, 86400, 600)
-                            rate = real_rate_pm(window)
-                            st = (cfg.get('state') or {})
-                            run = dict(cfg.get('auto_run') or {})
-                            above = int(run.get('above') or 0)
-                            below = int(run.get('below') or 0)
-                            above = above + 1 if rate >= thr else 0
-                            below = below + 1 if rate <= off else 0
-                            action = 'wait'
-                            reason = ('трафик %s зап/мин, порог вкл %s — %s/%s проверок подряд'
-                                      % (rate, thr, above, hold))
-                            if not actual:
-                                if above >= hold and now - int(st.get('manual_at') or 0) >= min_off:
-                                    desired = True
-                                    source = 'auto'
-                                    action = 'on'
-                                    reason = ('трафик %s зап/мин ≥ %s — %s проверок подряд'
-                                              % (rate, thr, above))
-                                    above = 0
-                                    below = 0
-                            else:
-                                if st.get('source') == 'auto':
-                                    if rate <= off:
-                                        reason = ('трафик %s зап/мин ≤ %s — %s/%s проверок'
-                                                  % (rate, off, below, hold_off))
-                                    if below >= hold_off and now - int(st.get('changed_at') or 0) >= cool:
-                                        desired = False
-                                        source = 'auto'
-                                        action = 'off'
-                                        reason = ('трафик %s зап/мин ≤ %s — %s проверок подряд'
-                                                  % (rate, off, below))
-                                        above = 0
-                                        below = 0
-                            with LOCK:
-                                sites2 = STATE.setdefault('waiting', {}).setdefault('sites', {})
-                                c2 = sites2.setdefault(host, {})
-                                c2['auto_run'] = {'above': above, 'below': below, 'rate': rate,
-                                                  'last_eval': int(now), 'window': window,
-                                                  'threshold': thr, 'off_threshold': off}
-                                log = c2.setdefault('auto_log', [])
-                                log.insert(0, {'ts': int(now), 'rate': rate, 'action': action, 'reason': reason})
-                                del log[20:]
-                                save_state(STATE)
-                        except Exception:
-                            pass
-                if desired != actual:
-                    ok = waiting_set_enabled(site['id'], desired)
-                    if ok:
-                        waiting_state_set(host, desired, source)
-                        with LOCK:
-                            sites = STATE.setdefault('waiting', {}).setdefault('sites', {})
-                            sty = sites.setdefault(host, {}).setdefault('state', {})
-                            if sty.get('pending') is not None and bool(sty['pending']) == bool(desired):
-                                sty.pop('pending', None)
-                            save_state(STATE)
-                        time.sleep(2.5)
-                        run(['/opt/slext/bin/apply-injection.sh'], timeout=120)
-                        if notify_on:
-                            notify_send('SLExt: зал ожидания на %s %s (источник: %s)' %
-                                        (host, 'включён' if desired else 'выключен', source))
-                else:
-                    with LOCK:
-                        sites = STATE.setdefault('waiting', {}).setdefault('sites', {})
-                        st = sites.setdefault(host, {}).setdefault('state', {})
-                        st['enabled'] = actual
-                        if st.get('pending') is not None and bool(st['pending']) == bool(actual):
-                            st.pop('pending', None)
-                        if st.get('source') in (None, ''):
-                            st['source'] = 'manual'
-                try:
-                    with db() as conn, conn.cursor() as c:
-                        c.execute('SELECT COALESCE(MAX(id), 0) FROM mgt_wr_stat_log WHERE site_id=%s', (site['id'],))
-                        maxid = c.fetchone()[0]
-                        if maxid > int(last_sessions.get(host, maxid)):
-                            c.execute('SELECT id, total_waiting, top_waiting, total_serving, avg_wait_sec, '
-                                      'bounce_rate, dur_sec FROM mgt_wr_stat_log WHERE site_id=%s AND id > %s '
-                                      'ORDER BY id ASC LIMIT 5', (site['id'], int(last_sessions.get(host, maxid))))
-                            for r in c.fetchall():
-                                if notify_on:
-                                    notify_send('SLExt: зал ожидания %s — сессия завершена\n'
-                                                'В очереди: %s, пик: %s, обслужено: %s\nСреднее ожидание: %s с, '
-                                                'отказы: %s%%, длительность: %s с' %
-                                                (host, r[1], r[2], r[3], r[4], round(float(r[5] or 0) * 100, 1), r[6]))
-                        last_sessions[host] = maxid
-                except Exception:
-                    pass
-            with LOCK:
-                save_state(STATE)
+            _wr_tick(first)
+            first = False
         except Exception:
             pass
-        time.sleep(30)
+        time.sleep(20)
 
 
 LT_JOBS = {}
@@ -2995,10 +3171,11 @@ class H(BaseHTTPRequestHandler):
             if not host and sites:
                 host = (sites[0]['hosts'] or [''])[0]
             site = site_by_host(host) if host else None
-            conf = waiting_conf(site['id']) if site else {}
+            conf = mgt_conf_cached(site['id'], ttl=3) if site else {}
             stats = waiting_stats(site['id']) if site else {}
             with LOCK:
                 panel_base = str((STATE.get('waiting') or {}).get('panel_base') or '')
+                patch = dict(WR_PATCH)
             cfg = waiting_cfg(host)
             live = None
             try:
@@ -3008,8 +3185,9 @@ class H(BaseHTTPRequestHandler):
             except Exception:
                 live = None
             return self._json(200, {'ok': True, 'sites': sites, 'host': host,
-                                    'site': site, 'mgt': conf, 'cfg': cfg,
-                                    'live_rate': live, 'stats': stats, 'panel_base': panel_base})
+                                    'site': site, 'mgt': conf, 'mgt_ok': bool(conf), 'cfg': cfg,
+                                    'live_rate': live, 'stats': stats, 'panel_base': panel_base,
+                                    'busy': WR_OP_LOCK.locked(), 'patch': patch})
         if u.path == '/api/loadtest':
             with LOCK:
                 job = json.loads(json.dumps(STATE.get('loadtest') or {}))
@@ -3472,20 +3650,12 @@ class H(BaseHTTPRequestHandler):
             if not site:
                 return self._json(400, {'ok': False, 'error': 'site not found'})
             enabled = bool(body.get('enabled'))
-            if not waiting_set_enabled(site['id'], enabled, token=self._token()):
-                with LOCK:
-                    st = STATE.setdefault('waiting', {}).setdefault('sites', {}).setdefault(host, {}).setdefault('state', {})
-                    st['pending'] = enabled
-                    save_state(STATE)
-                return self._json(400, {'ok': False, 'error': 'SafeLine не подтвердил изменение — повторю автоматически'})
-            waiting_state_set(host, enabled, 'manual')
-            with LOCK:
-                st = STATE.setdefault('waiting', {}).setdefault('sites', {}).setdefault(host, {}).setdefault('state', {})
-                st.pop('pending', None)
-                save_state(STATE)
-            time.sleep(2.5)
-            page_apply()
-            return self._json(200, {'ok': True, 'mgt': waiting_conf(site['id']), 'cfg': waiting_cfg(host)})
+            res = wr_apply(host, site['id'], enabled, 'manual', token=self._token())
+            mgt = res.get('mgt') or mgt_conf_cached(site['id'], ttl=0)
+            payload = {'ok': bool(res.get('ok')), 'error': res.get('error') or '',
+                       'mgt': mgt, 'mgt_ok': bool(mgt), 'cfg': waiting_cfg(host),
+                       'changed': bool(res.get('changed'))}
+            return self._json(200 if res.get('ok') else 400, payload)
         if u.path == '/api/waiting/page':
             host = str(body.get('site') or '')[:200]
             if not self._host_ok(host):
@@ -3747,6 +3917,7 @@ def main():
     threading.Thread(target=alarm_worker, daemon=True).start()
     threading.Thread(target=backup_worker, daemon=True).start()
     threading.Thread(target=waiting_worker, daemon=True).start()
+    threading.Thread(target=wr_startup, daemon=True).start()
     threading.Thread(target=dns_worker, daemon=True).start()
 
     # Слушаем 127.0.0.1 и приватные адреса docker-мостов, чтобы панель (контейнер)
