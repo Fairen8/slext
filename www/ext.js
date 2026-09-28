@@ -2,7 +2,7 @@
   'use strict';
 
   var API = location.origin + '/extapi';
-  var EXTVER = '49';
+  var EXTVER = '50';
 
   function tok() {
     try { return localStorage.getItem('safeline_auth') || ''; } catch (e) { return ''; }
@@ -68,6 +68,13 @@
   function applyTheme(dark) {
     document.documentElement.classList.toggle('slext-dark', !!dark);
     try { localStorage.setItem('slext_dark', dark ? '1' : '0'); } catch (e) {}
+    redrawWorkspace();
+  }
+
+  function redrawWorkspace() {
+    var host = document.getElementById('sl-tab-' + SL_TAB);
+    if (host) host.innerHTML = '';
+    try { renderWorkspaceTab(); } catch (e) {}
   }
 
   function initTheme() {
@@ -238,10 +245,16 @@
       return '<div class="sl-tabpane" id="sl-tab-' + t[0] + '"></div>';
     }).join('');
     a = el('<div id="sl-app">' +
-      '<div id="sl-app-head"><b>SLExt</b><span class="sl-badge">расширения SafeLine</span>' +
+      '<div id="sl-app-head">' +
+      '<span class="sl-crumb">SLExt</span>' +
+      '<span class="sl-crumb-sep">&rsaquo;</span>' +
+      '<span class="sl-tabname" id="sl-app-tab-name">Обзор</span>' +
       '<span class="sl-badge" id="sl-app-user"></span>' +
-      '<span class="sl-hint" id="sl-app-status" style="margin:0"></span>' +
-      '<button id="sl-app-close" title="Закрыть">&times;</button></div>' +
+      '<span class="sl-hint" id="sl-app-status"></span>' +
+      '<button id="sl-app-close" title="Закрыть" aria-label="Закрыть">' +
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">' +
+      '<path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>' +
+      '</svg></button></div>' +
       '<div id="sl-app-tabs">' + tabs + '</div>' +
       '<div id="sl-app-body">' + panes + '</div></div>');
     document.body.appendChild(a);
@@ -293,6 +306,8 @@
     for (var i = 0; i < btns.length; i++) {
       btns[i].classList.toggle('on', btns[i].getAttribute('data-tab') === SL_TAB);
     }
+    var nameEl = document.getElementById('sl-app-tab-name');
+    if (nameEl) for (var k = 0; k < SL_TABS.length; k++) if (SL_TABS[k][0] === SL_TAB) { nameEl.textContent = SL_TABS[k][1]; break; }
     var panes = document.querySelectorAll('#sl-app .sl-tabpane');
     for (var j = 0; j < panes.length; j++) {
       panes[j].style.display = (panes[j].id === 'sl-tab-' + SL_TAB) ? 'block' : 'none';
@@ -380,6 +395,10 @@
     return n + ' Б';
   }
 
+  function slVar(name, fallback) {
+    try { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback; } catch (e) { return fallback; }
+  }
+
   function canvasLine(canvas, values) {
     if (!canvas || !values.length) return;
     var dpr = window.devicePixelRatio || 1;
@@ -406,9 +425,11 @@
       chart.setOption({
         grid: { left: 40, right: 12, top: 20, bottom: 26 },
         tooltip: { trigger: 'axis' },
+        color: slVar('--sl-primary', '#0fc6c2'),
         xAxis: { type: 'category', data: points.map(function (p) { return p.label; }),
-                 axisLabel: { fontSize: 10 } },
-        yAxis: { type: 'value', splitLine: { lineStyle: { opacity: 0.2 } } },
+                 axisLabel: { fontSize: 10, color: slVar('--sl-text3', 'rgba(0,0,0,.5)') } },
+        yAxis: { type: 'value', axisLabel: { color: slVar('--sl-text3', 'rgba(0,0,0,.5)') },
+                 splitLine: { lineStyle: { opacity: 0.2, color: slVar('--sl-divider', '#E3E8EF') } } },
         series: [{ type: 'line', smooth: true, areaStyle: { opacity: 0.15 },
                    name: label || 'count', data: points.map(function (p) { return p.value; }) }]
       });
@@ -963,9 +984,10 @@
     var max = (rows || []).reduce(function (m, r) { return Math.max(m, r.count || 0); }, 1);
     return '<div class="sl-bars">' + ((rows || []).map(function (r) {
       var w = Math.round(((r.count || 0) / max) * 100);
-      return '<div class="sl-bar"><div class="sl-bar-label">' + esc(r.label) + '</div>' +
-        '<div class="sl-bar-track"><div class="sl-bar-fill" style="width:' + w + '%"></div></div>' +
-        '<div class="sl-bar-val">' + fmtNum(r.count) + '</div></div>';
+      return '<div class="sl-bar">' +
+        '<div class="sl-bar-head"><span class="sl-bar-label">' + esc(r.label) + '</span>' +
+        '<span class="sl-bar-val">' + fmtNum(r.count) + '</span></div>' +
+        '<div class="sl-bar-track"><div class="sl-bar-fill" style="width:' + w + '%"></div></div></div>';
     }).join('') || '<div class="sl-hint">Нет данных</div>') + '</div>';
   }
 
@@ -1265,7 +1287,7 @@
         '<div class="sl-hint">Заменяют стандартные страницы SafeLine (403 · 404 · 429 · 465 · 466 · 502 · 504) на свои и работают вместо заблокированного раздела Blocking Pages → Custom HTML. Применяется ко всем сайтам.</div>' +
         '<div class="sl-row"><label><input type="checkbox" id="sl-pg-en"' + (p.enabled ? ' checked' : '') + '> включено</label>' +
         '<label>Бренд</label><input class="sl-input" id="sl-pg-brand" value="' + esc(p.brand) + '">' +
-        '<label>Цвет</label><input class="sl-input sl-w" id="sl-pg-color" value="' + esc(p.color) + '"></div>' +
+        '<label>Цвет</label><input class="sl-input sl-w" id="sl-pg-color" value="' + esc(p.color) + '" placeholder="по коду страницы"></div>' +
         '<table class="sl-table"><tr><th>Вкл</th><th>Код</th><th>Заголовок</th><th>Текст</th><th></th></tr>' + rows + '</table>' +
         '<div class="sl-row"><button class="sl-btn sl-btn-pri" id="sl-pg-save">Сохранить и применить</button></div></div>');
       host.appendChild(card);
@@ -1299,7 +1321,7 @@
       return {
         enabled: !!((document.getElementById('sl-pg-en') || {}).checked),
         brand: ((document.getElementById('sl-pg-brand') || {}).value || 'SafeLine'),
-        color: ((document.getElementById('sl-pg-color') || {}).value || '#0fc6c2'),
+        color: (((document.getElementById('sl-pg-color') || {}).value || '').trim()),
         pages: pages
       };
     }
@@ -2007,34 +2029,37 @@
         var chart = window.echarts.getInstanceByDom(node) || window.echarts.init(node);
         var opt = {
           grid: { left: 50, right: 50, top: 28, bottom: 28 },
-          tooltip: { trigger: 'axis' }
+          tooltip: { trigger: 'axis' },
+          color: [slVar('--sl-primary', '#0fc6c2'), '#6199fe', '#ffd268', '#ff5576']
         };
+        var axc = slVar('--sl-text3', 'rgba(0,0,0,.5)');
+        var gridc = slVar('--sl-divider', '#E3E8EF');
         if (PX_METRIC === 'req') {
-          opt.legend = { data: ['RPS'], right: 0, top: 0, textStyle: { fontSize: 11 } };
-          opt.xAxis = { type: 'category', data: labels, axisLabel: { fontSize: 10 } };
-          opt.yAxis = { type: 'value', name: 'RPS', nameTextStyle: { fontSize: 10 }, splitLine: { lineStyle: { opacity: 0.15 } } };
+          opt.legend = { data: ['RPS'], right: 0, top: 0, textStyle: { fontSize: 11, color: axc } };
+          opt.xAxis = { type: 'category', data: labels, axisLabel: { fontSize: 10, color: axc } };
+          opt.yAxis = { type: 'value', name: 'RPS', nameTextStyle: { fontSize: 10 }, axisLabel: { color: axc }, splitLine: { lineStyle: { opacity: 0.15, color: gridc } } };
           opt.series = [{ name: 'RPS', type: 'line', smooth: true, areaStyle: { opacity: 0.12 },
                           data: tl.map(function (x) { return x.rps; }) }];
         } else if (PX_METRIC === 'bw') {
-          opt.legend = { data: ['отдано, МБ', 'принято, МБ'], right: 0, top: 0, textStyle: { fontSize: 11 } };
-          opt.xAxis = { type: 'category', data: labels, axisLabel: { fontSize: 10 } };
-          opt.yAxis = { type: 'value', name: 'МБ', nameTextStyle: { fontSize: 10 }, splitLine: { lineStyle: { opacity: 0.15 } } };
+          opt.legend = { data: ['отдано, МБ', 'принято, МБ'], right: 0, top: 0, textStyle: { fontSize: 11, color: axc } };
+          opt.xAxis = { type: 'category', data: labels, axisLabel: { fontSize: 10, color: axc } };
+          opt.yAxis = { type: 'value', name: 'МБ', nameTextStyle: { fontSize: 10 }, axisLabel: { color: axc }, splitLine: { lineStyle: { opacity: 0.15, color: gridc } } };
           opt.series = [
             { name: 'отдано, МБ', type: 'line', smooth: true, areaStyle: { opacity: 0.12 }, data: tl.map(function (x) { return x.out_mb; }) },
             { name: 'принято, МБ', type: 'line', smooth: true, data: tl.map(function (x) { return x.in_mb; }) }
           ];
         } else if (PX_METRIC === 'p95') {
-          opt.legend = { data: ['p50, мс', 'p95, мс'], right: 0, top: 0, textStyle: { fontSize: 11 } };
-          opt.xAxis = { type: 'category', data: labels, axisLabel: { fontSize: 10 } };
-          opt.yAxis = { type: 'value', name: 'мс', nameTextStyle: { fontSize: 10 }, splitLine: { lineStyle: { opacity: 0.15 } } };
+          opt.legend = { data: ['p50, мс', 'p95, мс'], right: 0, top: 0, textStyle: { fontSize: 11, color: axc } };
+          opt.xAxis = { type: 'category', data: labels, axisLabel: { fontSize: 10, color: axc } };
+          opt.yAxis = { type: 'value', name: 'мс', nameTextStyle: { fontSize: 10 }, axisLabel: { color: axc }, splitLine: { lineStyle: { opacity: 0.15, color: gridc } } };
           opt.series = [
             { name: 'p50, мс', type: 'line', smooth: true, data: tl.map(function (x) { return x.p50; }) },
             { name: 'p95, мс', type: 'line', smooth: true, areaStyle: { opacity: 0.12 }, data: tl.map(function (x) { return x.p95; }) }
           ];
         } else {
-          opt.legend = { data: ['2xx/3xx', '4xx', '5xx'], right: 0, top: 0, textStyle: { fontSize: 11 } };
-          opt.xAxis = { type: 'category', data: labels, axisLabel: { fontSize: 10 } };
-          opt.yAxis = { type: 'value', splitLine: { lineStyle: { opacity: 0.15 } } };
+          opt.legend = { data: ['2xx/3xx', '4xx', '5xx'], right: 0, top: 0, textStyle: { fontSize: 11, color: axc } };
+          opt.xAxis = { type: 'category', data: labels, axisLabel: { fontSize: 10, color: axc } };
+          opt.yAxis = { type: 'value', axisLabel: { color: axc }, splitLine: { lineStyle: { opacity: 0.15, color: gridc } } };
           opt.series = [
             { name: '2xx/3xx', type: 'bar', stack: 'e', data: tl.map(function (x) { return Math.max(0, x.count - x.e4 - x.e5); }) },
             { name: '4xx', type: 'bar', stack: 'e', data: tl.map(function (x) { return x.e4; }) },
@@ -2209,12 +2234,15 @@
     if (window.echarts) {
       try {
         var ch = window.echarts.getInstanceByDom(node) || window.echarts.init(node);
+        var axc = slVar('--sl-text3', 'rgba(0,0,0,.5)');
+        var gridc = slVar('--sl-divider', '#E3E8EF');
         ch.setOption({
           grid: { left: 48, right: 14, top: 26, bottom: 26 },
           tooltip: { trigger: 'axis' },
-          legend: { right: 0, top: 0, textStyle: { fontSize: 11 } },
-          xAxis: { type: 'category', data: ts, axisLabel: { fontSize: 10 } },
-          yAxis: { type: 'value', name: 'мс', nameTextStyle: { fontSize: 10 }, splitLine: { lineStyle: { opacity: 0.15 } } },
+          color: [slVar('--sl-primary', '#0fc6c2'), '#6199fe', '#ffd268', '#ff5576'],
+          legend: { right: 0, top: 0, textStyle: { fontSize: 11, color: axc } },
+          xAxis: { type: 'category', data: ts, axisLabel: { fontSize: 10, color: axc } },
+          yAxis: { type: 'value', name: 'мс', nameTextStyle: { fontSize: 10 }, axisLabel: { color: axc }, splitLine: { lineStyle: { opacity: 0.15, color: gridc } } },
           series: series
         }, true);
         return;
@@ -2429,7 +2457,7 @@
           '<input class="sl-input sl-wide" data-acc-domains list="sl-acc-hosts" value="' + esc((u.domains || []).join(', ')) + '">' +
           '<button class="sl-btn sl-btn-pri" data-acc-save="' + esc(u.username) + '">Сохранить</button>' +
           '<button class="sl-btn" data-acc-pw="' + esc(u.username) + '" title="Сменить пароль">Пароль</button>' +
-          (u.username === 'admin' ? '' : '<button class="sl-btn sl-btn-x" data-acc-del="' + esc(u.username) + '" title="Удалить пользователя">Удалить</button>') +
+          (u.username === 'admin' ? '' : '<button class="sl-btn sl-btn-danger" data-acc-del="' + esc(u.username) + '" title="Удалить пользователя">Удалить</button>') +
           (u.configured ? '' : '<span class="sl-badge">не настроен — полный доступ</span>') + '</div>' +
           '<div class="sl-perms" data-acc-perms style="' + (u.role === 'custom' ? '' : 'display:none') + '">' +
           '<div class="sl-hint">Права для настраиваемой роли:</div>' + permsHtml + '</div></div>';
@@ -2485,7 +2513,7 @@
           return '<tr><td class="sl-mono">' + esc(x.ip) + '</td><td>' + esc(x.country || '—') + '</td>' +
             '<td>' + esc(x.as_org || '—') + '</td><td>' + esc(x.scenario) + '</td>' +
             '<td>' + esc(x.duration) + '</td><td>' + esc(x.type) + '</td>' +
-            '<td><button class="sl-btn sl-btn-x" data-sl-unban="' + esc(x.ip) + '" title="Снять бан"' +
+            '<td><button class="sl-btn sl-btn-danger" data-sl-unban="' + esc(x.ip) + '" title="Снять бан"' +
             (can('crowdsec.ban') ? '' : ' disabled') + '>unban</button></td></tr>';
         }).join('');
         node.innerHTML = (rows ? '<table class="sl-table"><tr><th>IP</th><th>Страна</th><th>AS</th><th>Сценарий</th><th>Осталось</th><th>Тип</th><th></th></tr>' + rows + '</table>'
@@ -2800,7 +2828,7 @@
         '<input class="sl-input" id="sl-uedit-pass" type="password" autocomplete="new-password" placeholder="мин. 8 символов"></div>' +
         '<div class="sl-err" id="sl-uedit-err" style="display:none;margin-top:8px"></div>' +
         '<div class="sl-modal-actions">' +
-        (username === 'admin' ? '' : '<button class="sl-btn sl-btn-x" id="sl-uedit-del" style="margin-right:auto">Удалить</button>') +
+        (username === 'admin' ? '' : '<button class="sl-btn sl-btn-danger" id="sl-uedit-del" style="margin-right:auto">Удалить</button>') +
         '<button class="sl-btn" id="sl-uedit-cancel">Отмена</button>' +
         '<button class="sl-btn sl-btn-pri" id="sl-uedit-save">Сохранить</button></div>' +
         '</div></div>');
