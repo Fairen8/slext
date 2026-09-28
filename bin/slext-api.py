@@ -68,25 +68,25 @@ ACTION_NAMES = {1: 'Blocked', 2: 'Inspected', 3: 'Audited'}
 PAGE_DEFS = {
     '403': {'file': 'forbidden.html', 'loc': '/.safeline/forbidden_page',
             'title': 'Запрос заблокирован', 'message': 'Запрос заблокирован системой защиты сайта.',
-            'icon': 'shield'},
+            'icon': 'shield', 'color': '#FF6666'},
     '404': {'file': 'not_found.html', 'loc': '/.safeline/not_found_page',
             'title': 'Страница не найдена', 'message': 'Такой страницы здесь нет.',
-            'icon': 'search'},
+            'icon': 'search', 'color': '#0067B8'},
     '429': {'file': 'acl.html', 'loc': '/.safeline/acl_page',
             'title': 'Слишком много запросов', 'message': 'Превышен лимит запросов. Попробуйте чуть позже.',
-            'icon': 'gauge'},
+            'icon': 'gauge', 'color': '#FF6666'},
     '465': {'file': 'waiting_room.html', 'loc': '/.safeline/waiting_room_page',
             'title': 'Вы в очереди', 'message': 'Сейчас большой наплыв посетителей. Страница откроется автоматически.',
-            'icon': 'hourglass'},
+            'icon': 'hourglass', 'color': '#0067B8'},
     '466': {'file': 'offline.html', 'loc': '/.safeline/offline_page',
             'title': 'Сайт на обслуживании', 'message': 'Идут технические работы. Скоро вернёмся.',
-            'icon': 'wrench'},
+            'icon': 'wrench', 'color': '#0067B8'},
     '502': {'file': 'bad_gateway.html', 'loc': '/.safeline/bad_gateway_page',
             'title': 'Сервис недоступен', 'message': 'Сервер не отвечает. Попробуйте обновить страницу.',
-            'icon': 'plug'},
+            'icon': 'plug', 'color': '#FF6666'},
     '504': {'file': 'gateway_timeout.html', 'loc': '/.safeline/gateway_timeout_page',
             'title': 'Превышено время ожидания', 'message': 'Сервер слишком долго отвечает. Попробуйте ещё раз.',
-            'icon': 'clock'},
+            'icon': 'clock', 'color': '#FF6666'},
 }
 
 PAGE_ICONS = {
@@ -109,66 +109,33 @@ $refresh
 <title>$title</title>
 <!-- slext-error-page -->
 <style>
-:root{
-  --accent:$accent;
-  --bg1:#070b12; --bg2:#0d1420;
-  --card:rgba(22,30,44,.74);
-  --text:#e8eef7; --muted:#93a4bd; --line:rgba(255,255,255,.09);
-}
-@media (prefers-color-scheme: light){
-  :root{ --bg1:#eef2f9; --bg2:#e2e9f4; --card:rgba(255,255,255,.86);
-         --text:#0e1626; --muted:#5a6b85; --line:rgba(12,24,48,.10); }
-}
+:root{--primary-color:$accent;--light-primary-color:#9AC3E3;--font-color:#FFFFFF;--light-font-color:#B3D1E9;--warning-color:#FF6666;--warning-font-color:#FFFFFF;--warning-light-font-color:#FFD1D1}
 *{box-sizing:border-box}
-html,body{height:100%}
-body{margin:0;min-height:100%;display:flex;align-items:center;justify-content:center;padding:24px;
-  background:
-    radial-gradient(1200px 620px at 12% -12%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 62%),
-    radial-gradient(900px 520px at 112% 112%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 58%),
-    linear-gradient(160deg,var(--bg1),var(--bg2));
-  color:var(--text);
-  font-family:ui-sans-serif,system-ui,"Segoe UI",Roboto,Inter,Arial,sans-serif;
-  -webkit-font-smoothing:antialiased}
-.wrap{width:100%;max-width:580px}
-.card{position:relative;overflow:hidden;background:var(--card);
-  border:1px solid var(--line);border-radius:24px;padding:38px 34px 26px;
-  box-shadow:0 34px 90px -34px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.06);
-  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
-.glow{position:absolute;top:-42%;right:-18%;width:340px;height:340px;pointer-events:none;
-  background:radial-gradient(closest-side, color-mix(in srgb, var(--accent) 42%, transparent), transparent);
-  filter:blur(26px);opacity:.55}
-.badge{display:inline-flex;align-items:center;gap:10px;padding:7px 13px;border:1px solid var(--line);
-  border-radius:999px;color:var(--muted);font-size:11.5px;letter-spacing:.14em;text-transform:uppercase}
-.ic{width:40px;height:40px;border-radius:13px;display:inline-flex;align-items:center;justify-content:center;
-  background:color-mix(in srgb, var(--accent) 17%, transparent);
-  border:1px solid color-mix(in srgb, var(--accent) 36%, transparent);color:var(--accent)}
-.ic svg{width:22px;height:22px}
-.code{font-size:clamp(62px,13vw,102px);font-weight:800;line-height:1;letter-spacing:-.045em;margin:24px 0 4px;
-  background:linear-gradient(118deg, var(--accent), color-mix(in srgb, var(--accent) 35%, #fff));
-  -webkit-background-clip:text;background-clip:text;color:transparent}
-h1{font-size:22px;margin:6px 0 10px;letter-spacing:-.01em}
-p{color:var(--muted);line-height:1.65;margin:0 0 22px;font-size:15px}
-.btn{display:inline-block;padding:11px 18px;border-radius:12px;text-decoration:none;font-size:14px;
-  color:var(--text);border:1px solid color-mix(in srgb, var(--accent) 46%, transparent);
-  background:color-mix(in srgb, var(--accent) 15%, transparent);transition:transform .15s ease, border-color .15s ease}
-.btn:hover{transform:translateY(-1px);border-color:var(--accent)}
-.foot{margin-top:26px;padding-top:15px;border-top:1px solid var(--line);display:flex;justify-content:space-between;
-  align-items:center;color:var(--muted);font-size:11.5px;letter-spacing:.1em;text-transform:uppercase}
-.dot{width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block;margin-right:8px;
-  box-shadow:0 0 12px var(--accent);vertical-align:1px}
-@media (max-width:480px){.card{padding:28px 22px 20px;border-radius:20px}.code{margin-top:18px}}
+html,body{height:100%;margin:0}
+body{font-family:PingFang SC,Helvetica Neue,Helvetica,Arial,sans-serif;background-color:var(--primary-color)}
+#slg-bg{background-color:var(--primary-color);position:fixed;inset:0;z-index:100}
+#slg-box{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:90%;max-width:40rem;text-align:center;z-index:300}
+#slg-warning{display:block;margin:0 auto 18px}
+#slg-text{font-size:1.5rem;line-height:2.2rem;color:var(--font-color)}
+#slg-desc{color:var(--light-font-color);font-size:.8rem;line-height:2rem}
+.btn{display:inline-block;margin-top:12px;padding:10px 22px;border-radius:999px;background:var(--font-color);color:var(--primary-color);font-size:14px;text-decoration:none}
+#slg-copyright{position:fixed;left:0;right:0;bottom:0;padding:0 0 1.5rem;text-align:center;color:var(--light-font-color);font-size:.8rem;line-height:2rem;z-index:300}
+#slg-logo svg{display:block;margin:0 auto}
+#slg-name{color:var(--font-color)}
 </style>
 </head>
 <body>
-<div class="wrap"><div class="card"><span class="glow"></span>
-  <span class="badge"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-    stroke-linecap="round" stroke-linejoin="round">$icon</svg></span> Код $code</span>
-  <div class="code">$code</div>
-  <h1>$title</h1>
-  <p>$message</p>
+<div id="slg-bg"></div>
+<div id="slg-box">
+  <svg id="slg-warning" width="68" height="59"><g fill="var(--font-color)"><g><path d="M29.455 2.852c2.062-3.527 6.151-4.07 8.48 0 1.538 2.527 7.818 13.159 14.15 23.904l.827 1.401.412.7.823 1.396A32540 32540 0 0 1 67.03 52.144l.02.038c.26.507 2.626 5.356-1.267 6.818H3.356s-6.846-1.44-.983-9.723c2.345-3.963 8.37-14.306 14.423-24.7l1.008-1.73c4.476-7.689 8.855-15.211 11.651-19.995m4.526 40.47c-2.157 0-3.905 1.74-3.905 3.885s1.748 3.884 3.905 3.884 3.905-1.739 3.905-3.884-1.748-3.884-3.905-3.884m.042-23.955c-2.18 0-3.947 1.758-3.947 3.926V35.69c0 2.168 1.767 3.926 3.947 3.926s3.947-1.757 3.947-3.926V23.293c0-2.168-1.767-3.926-3.947-3.926"/></g></g></svg>
+  <div id="slg-text">$title</div>
+  <div id="slg-desc">$message</div>
   $button
-  <div class="foot"><span><i class="dot"></i>$brand</span><span>ЗАЩИЩЕНО NRG / INDEX</span></div>
-</div></div>
+</div>
+<div id="slg-copyright">
+  <div id="slg-logo"><svg width="32" height="35"><g fill="var(--font-color)"><path d="M15.006.33c.602-.44 1.4-.44 2.002 0 1.985 1.444 6.911 4.473 12.901 4.631.78.035 1.418.599 1.577 1.356.922 4.754 2.605 20.848-15.452 28.35C-2.077 27.183-.43 11.07.528 6.317c.142-.757.815-1.32 1.577-1.356 5.99-.158 10.863-3.187 12.9-4.63m1.037 4.54c-.28 1.647-2.15 1.938-2.15 1.938-1.9.309-2.819-1.12-2.819-1.12.82 2.255 2.198 2.391 2.446 2.397h2.423c-.7 1.802-3.48 2.133-3.48 2.133-3.159.39-4.689-1.423-4.689-1.423q.17.357.358.66l-.008-.005a11 11 0 0 0-3.106 7.671c0 6.09 4.937 11.026 11.026 11.026 6.09 0 11.027-4.936 11.027-11.026a11 11 0 0 0-3.11-7.674q.185-.3.353-.652s-1.53 1.816-4.69 1.423c0 0-2.776-.33-3.478-2.132h2.42c.245-.006 1.627-.14 2.448-2.397 0 0-.92 1.428-2.82 1.12-.142-.025-1.882-.356-2.15-1.94"/><polygon points="15.98353 17.9879553 9.8818726 21.4510476 15.3313444 24.6578974 17.2903808 23.6211992 13.5799337 21.4510476 15.98353 20.0985396 20.3159976 22.5564681 20.3159976 23.3648458 22.2042418 24.5010295 22.2042418 21.4510476" transform="rotate(-180 16.043 21.323)"/><polygon points="15.9835296 10.9942305 9.8818722 14.4573228 15.331344 17.6641726 17.2903804 16.6274743 13.5799333 14.4573228 15.9835296 13.1048148 20.3159972 15.5627433 20.3159972 16.371121 22.2042414 17.5073047 22.2042414 14.4573228"/></g></svg></div>
+  <div id="slg-copyright-text"><span id="slg-prefix">Security Detection Powered By</span> <span id="slg-name">$brand</span></div>
+</div>
 </body>
 </html>
 ''')
@@ -226,7 +193,7 @@ def default_state():
         },
         'geo': {'enabled': False, 'mode': 'block', 'countries': [],
                 'updated_at': 0, 'last_error': ''},
-        'page': {'enabled': False, 'brand': 'NRG / INDEX', 'color': '#0fc6c2', 'updated_at': 0,
+        'page': {'enabled': False, 'brand': 'SafeLine WAF', 'color': '', 'updated_at': 0,
                  'pages': {c: {'enabled': True, 'title': PAGE_DEFS[c]['title'],
                                'message': PAGE_DEFS[c]['message']} for c in PAGE_DEFS}},
         'alarm': {'enabled': False, 'rules': [
@@ -252,9 +219,15 @@ def migrate_state(st):
         pages['403'] = {'enabled': True,
                         'title': p.get('title') or PAGE_DEFS['403']['title'],
                         'message': p.get('message') or PAGE_DEFS['403']['message']}
-        st['page'] = {'enabled': bool(p.get('enabled')), 'brand': p.get('brand') or 'NRG / INDEX',
-                      'color': p.get('color') or '#0fc6c2', 'updated_at': p.get('updated_at', 0),
+        st['page'] = {'enabled': bool(p.get('enabled')), 'brand': p.get('brand') or 'SafeLine WAF',
+                      'color': p.get('color') or '', 'updated_at': p.get('updated_at', 0),
                       'pages': pages}
+        p = st['page']
+    if isinstance(p, dict):
+        if str(p.get('color') or '') == '#0fc6c2':
+            p['color'] = ''
+        if not p.get('brand'):
+            p['brand'] = 'SafeLine WAF'
     return st
 
 
@@ -1282,11 +1255,12 @@ def page_html(code, cfg, page):
     d = PAGE_DEFS.get(code, PAGE_DEFS['403'])
     title = str(cfg.get('title') or d['title'])[:120]
     message = str(cfg.get('message') or d['message'])[:600]
-    brand = str(page.get('brand') or 'NRG / INDEX')[:60]
-    color = str(page.get('color') or '#0fc6c2')
+    brand = str(page.get('brand') or 'SafeLine WAF')[:60]
+    color = str(page.get('color') or '')
+    if not color or color == '#0fc6c2':
+        color = str(d.get('color') or '')
     if not re.match(r'^#[0-9a-fA-F]{3,8}$', color):
-        color = '#0fc6c2'
-    svg = PAGE_ICONS.get(d.get('icon'), PAGE_ICONS['shield'])
+        color = '#0067B8'
     button = ''
     refresh = ''
     if code in ('429', '465', '466', '502', '504'):
@@ -1296,8 +1270,8 @@ def page_html(code, cfg, page):
     elif code == '404':
         button = '<a class="btn" href="/">На главную</a>'
     return PAGE_TEMPLATE.safe_substitute(
-        code=code, title=_html.escape(title), message=_html.escape(message),
-        brand=_html.escape(brand), accent=color, icon=svg, button=button, refresh=refresh)
+        title=_html.escape(title), message=_html.escape(message),
+        brand=_html.escape(brand), accent=color, button=button, refresh=refresh)
 
 
 def page_apply():
@@ -1782,63 +1756,50 @@ WAITING_TEMPLATE = Template('''<!DOCTYPE html>
 <title>$title</title>
 <!-- slext-waiting-page -->
 <style>
-:root{--accent:$accent;--bg1:#070b12;--bg2:#0d1420;--card:rgba(22,30,44,.78);--text:#e8eef7;--muted:#93a4bd;--line:rgba(255,255,255,.09)}
-@media (prefers-color-scheme: light){:root{--bg1:#eef2f9;--bg2:#e2e9f4;--card:rgba(255,255,255,.9);--text:#0e1626;--muted:#5a6b85;--line:rgba(12,24,48,.10)}}
-*{box-sizing:border-box}html,body{height:100%}
-body{margin:0;min-height:100%;display:flex;align-items:center;justify-content:center;padding:24px;
- background:radial-gradient(1200px 620px at 12% -12%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 62%),
- radial-gradient(900px 520px at 112% 112%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 58%),
- linear-gradient(160deg,var(--bg1),var(--bg2));color:var(--text);
- font-family:ui-sans-serif,system-ui,"Segoe UI",Roboto,Inter,Arial,sans-serif;-webkit-font-smoothing:antialiased}
-.wrap{width:100%;max-width:600px}
-.card{position:relative;overflow:hidden;background:var(--card);border:1px solid var(--line);border-radius:24px;padding:40px 36px 26px;
- box-shadow:0 34px 90px -34px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.06);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
-.glow{position:absolute;top:-42%;right:-18%;width:360px;height:360px;pointer-events:none;
- background:radial-gradient(closest-side, color-mix(in srgb, var(--accent) 42%, transparent), transparent);filter:blur(26px);opacity:.55}
-.badge{display:inline-flex;align-items:center;gap:10px;padding:7px 13px;border:1px solid var(--line);border-radius:999px;
- color:var(--muted);font-size:11.5px;letter-spacing:.14em;text-transform:uppercase}
-.ic{width:40px;height:40px;border-radius:13px;display:inline-flex;align-items:center;justify-content:center;
- background:color-mix(in srgb, var(--accent) 17%, transparent);border:1px solid color-mix(in srgb, var(--accent) 36%, transparent);color:var(--accent)}
-.ic svg{width:22px;height:22px}
-h1{font-size:24px;margin:18px 0 8px;letter-spacing:-.01em}
-p{color:var(--muted);line-height:1.65;margin:0 0 16px;font-size:15px}
-.queue{display:flex;align-items:baseline;gap:10px;margin:6px 0 2px;flex-wrap:wrap}
-.pos{font-size:clamp(46px,11vw,74px);font-weight:800;letter-spacing:-.04em;line-height:1;
- background:linear-gradient(118deg,var(--accent), color-mix(in srgb, var(--accent) 35%, #fff));
- -webkit-background-clip:text;background-clip:text;color:transparent}
-.oflabel{color:var(--muted);font-size:14px}
-.dots{display:inline-flex;gap:6px;margin-left:6px}
-.dots i{width:8px;height:8px;border-radius:50%;background:var(--accent);opacity:.35;animation:bl 1.2s infinite}
-.dots i:nth-child(2){animation-delay:.15s}.dots i:nth-child(3){animation-delay:.3s}.dots i:nth-child(4){animation-delay:.45s}
-@keyframes bl{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-3px)}}
-.stats{margin-top:16px;padding:14px 16px;border:1px solid var(--line);border-radius:14px;display:none;grid-template-columns:repeat(3,1fr);gap:10px}
-.stats b{display:block;font-size:18px}
-.stats span{color:var(--muted);font-size:11.5px}
-.hint{margin-top:10px;font-size:12.5px;color:var(--muted)}
-.foot{margin-top:24px;padding-top:15px;border-top:1px solid var(--line);display:flex;justify-content:space-between;
- align-items:center;color:var(--muted);font-size:11.5px;letter-spacing:.1em;text-transform:uppercase}
-.dot{width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block;margin-right:8px;
- box-shadow:0 0 12px var(--accent);vertical-align:1px}
-@media (max-width:480px){.card{padding:28px 22px 20px;border-radius:20px}}
+:root{--primary-color:$accent;--light-primary-color:#9AC3E3;--font-color:#FFFFFF;--light-font-color:#B3D1E9;--success-color:#00B87C;--warning-color:#FF6666;--warning-font-color:#FFFFFF;--warning-light-font-color:#FFD1D1}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background-color:var(--primary-color);font-family:PingFang SC,Helvetica Neue,Helvetica,Arial,sans-serif}
+#slg-bg{background-color:var(--primary-color);position:fixed;inset:0;z-index:100}
+#slg-box{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:90%;max-width:40rem;text-align:center;z-index:300}
+#sl-dots{position:relative;width:64px;height:64px;margin:0 auto 18px}
+#sl-dots i{position:absolute;top:50%;left:50%;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;background:var(--font-color);opacity:.15;animation:sl-pulse 1.5s linear infinite}
+#sl-dots i:nth-child(1){transform:rotate(0deg) translateY(-26px)}
+#sl-dots i:nth-child(2){transform:rotate(72deg) translateY(-26px);animation-delay:.15s}
+#sl-dots i:nth-child(3){transform:rotate(144deg) translateY(-26px);animation-delay:.3s}
+#sl-dots i:nth-child(4){transform:rotate(216deg) translateY(-26px);animation-delay:.45s}
+#sl-dots i:nth-child(5){transform:rotate(288deg) translateY(-26px);animation-delay:.6s}
+@keyframes sl-pulse{0%,100%{opacity:.12}50%{opacity:1}}
+#slg-text{font-size:1.5rem;line-height:2.2rem;color:var(--font-color)}
+#sl-msg{margin:6px 0 0;color:var(--light-font-color);font-size:.8rem;line-height:2rem}
+#sl-queue{margin-top:10px;color:var(--light-font-color);font-size:1rem;line-height:2rem}
+#sl-pos,#sl-total{font-size:2.2rem;font-weight:700;color:var(--font-color)}
+#sl-note{margin-top:8px;color:var(--light-font-color);font-size:.8rem;line-height:2rem}
+#sl-stats{display:none;grid-auto-flow:column;justify-content:center;gap:16px;margin-top:10px;color:var(--light-font-color);font-size:.75rem;line-height:1.8}
+#sl-stats b{color:var(--font-color);font-weight:700}
+#slg-copyright{position:fixed;left:0;right:0;bottom:0;padding:0 0 1.5rem;text-align:center;color:var(--light-font-color);font-size:.8rem;line-height:2rem;z-index:300}
+#slg-logo svg{display:block;margin:0 auto}
+#slg-name{color:var(--font-color)}
 </style>
 </head>
 <body>
-<div class="wrap"><div class="card"><span class="glow"></span>
-  <span class="badge"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-   stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span> Зал ожидания</span>
-  <h1 id="sl-title">$title</h1>
-  <p id="sl-msg">$message</p>
-  <div class="queue"><span class="pos" id="sl-pos">$firstpos</span>
-    <span class="oflabel">$posttext <b id="sl-total">—</b></span>
-    <span class="dots" id="sl-dots"><i></i><i></i><i></i><i></i></span></div>
-  <div class="hint" id="sl-note">$note</div>
-  <div class="stats" id="sl-stats">
-    <div><b id="sl-st-peak">—</b><span>макс. очередь</span></div>
-    <div><b id="sl-st-queued">—</b><span>всего прошло очередь</span></div>
-    <div><b id="sl-st-avg">—</b><span>среднее ожидание</span></div>
+<div id="slg-bg"></div>
+<div id="slg-box">
+  <div id="sl-dots"><i></i><i></i><i></i><i></i><i></i></div>
+  <div id="slg-text">$title</div>
+  <div id="sl-msg">$message</div>
+  <div id="sl-queue">You Are <b id="sl-pos">$firstpos</b> th / <b id="sl-total">—</b> $posttext</div>
+  <div id="sl-note">$note</div>
+  <div id="sl-stats">
+    <span><b id="sl-st-peak">—</b> пик</span>
+    <span><b id="sl-st-queued">—</b> прошло</span>
+    <span><b id="sl-st-avg">—</b> среднее ожидание</span>
   </div>
-  <div class="foot"><span><i class="dot"></i>$brand</span><span>ЗАЩИЩЕНО NRG / INDEX</span></div>
-</div></div>
+</div>
+<div id="slg-copyright">
+  <div id="slg-logo"><svg width="32" height="35"><g fill="var(--font-color)"><path d="M15.006.33c.602-.44 1.4-.44 2.002 0 1.985 1.444 6.911 4.473 12.901 4.631.78.035 1.418.599 1.577 1.356.922 4.754 2.605 20.848-15.452 28.35C-2.077 27.183-.43 11.07.528 6.317c.142-.757.815-1.32 1.577-1.356 5.99-.158 10.863-3.187 12.9-4.63m1.037 4.54c-.28 1.647-2.15 1.938-2.15 1.938-1.9.309-2.819-1.12-2.819-1.12.82 2.255 2.198 2.391 2.446 2.397h2.423c-.7 1.802-3.48 2.133-3.48 2.133-3.159.39-4.689-1.423-4.689-1.423q.17.357.358.66l-.008-.005a11 11 0 0 0-3.106 7.671c0 6.09 4.937 11.026 11.026 11.026 6.09 0 11.027-4.936 11.027-11.026a11 11 0 0 0-3.11-7.674q.185-.3.353-.652s-1.53 1.816-4.69 1.423c0 0-2.776-.33-3.478-2.132h2.42c.245-.006 1.627-.14 2.448-2.397 0 0-.92 1.428-2.82 1.12-.142-.025-1.882-.356-2.15-1.94"/><polygon points="15.98353 17.9879553 9.8818726 21.4510476 15.3313444 24.6578974 17.2903808 23.6211992 13.5799337 21.4510476 15.98353 20.0985396 20.3159976 22.5564681 20.3159976 23.3648458 22.2042418 24.5010295 22.2042418 21.4510476" transform="rotate(-180 16.043 21.323)"/><polygon points="15.9835296 10.9942305 9.8818722 14.4573228 15.331344 17.6641726 17.2903804 16.6274743 13.5799333 14.4573228 15.9835296 13.1048148 20.3159972 15.5627433 20.3159972 16.371121 22.2042414 17.5073047 22.2042414 14.4573228"/></g></svg></div>
+  <div id="slg-copyright-text"><span id="slg-prefix">Security Detection Powered By</span> <span id="slg-name">$brand</span></div>
+</div>
 <script>
 (function(){
   var T={ready:'Готово — входим на сайт',pending:'Вы в очереди',full:'Очередь переполнена, попробуйте позже',
@@ -1886,9 +1847,11 @@ p{color:var(--muted);line-height:1.65;margin:0 0 16px;font-size:15px}
 
 def waiting_defaults(host):
     return {
-        'page': {'enabled': True, 'title': 'Секунду, вы в очереди', 'firstpos': '…',
-                 'posttext': 'Ваше место в очереди из', 'note': 'Страница обновится автоматически, когда подойдёт ваша очередь.',
-                 'brand': 'NRG / INDEX', 'color': '#0fc6c2', 'show_stats': True},
+        'page': {'enabled': True, 'title': 'You Are Now In Line',
+                 'message': 'Please wait — the page will refresh automatically.',
+                 'firstpos': '…', 'posttext': 'People Totally',
+                 'note': 'Do not close this page.',
+                 'brand': 'SafeLine WAF', 'color': '#0067B8', 'show_stats': True},
         'schedule': {'enabled': False, 'days': [1, 2, 3, 4, 5, 6, 7], 'from': '18:00', 'to': '23:00'},
         'auto': {'enabled': False, 'threshold': 60, 'off_threshold': 20, 'window': 60,
                  'hold': 3, 'hold_off': 4, 'cooldown': 600, 'min_off': 600},
@@ -1917,15 +1880,17 @@ def waiting_cfg(host):
 def waiting_page_html(host, cfg, panel_base=''):
     import html as _html
     p = cfg.get('page') or {}
-    title = _html.escape(str(p.get('title') or 'Секунду, вы в очереди')[:120])
-    message = _html.escape(str(p.get('message') or 'Сейчас очень много посетителей. Мы держим вас в очереди, чтобы сайт работал быстро.')[:600])
+    title = _html.escape(str(p.get('title') or 'You Are Now In Line')[:120])
+    message = _html.escape(str(p.get('message') or 'Please wait — the page will refresh automatically.')[:600])
     note = _html.escape(str(p.get('note') or '')[:300])
     firstpos = _html.escape(str(p.get('firstpos') or '—')[:8])
-    posttext = _html.escape(str(p.get('posttext') or 'Ваше место в очереди из')[:80])
-    brand = _html.escape(str(p.get('brand') or 'NRG / INDEX')[:60])
-    color = str(p.get('color') or '#0fc6c2')
+    posttext = _html.escape(str(p.get('posttext') or 'People Totally')[:80])
+    brand = _html.escape(str(p.get('brand') or 'SafeLine WAF')[:60])
+    color = str(p.get('color') or '')
+    if not color or color == '#0fc6c2':
+        color = '#0067B8'
     if not re.match(r'^#[0-9a-fA-F]{3,8}$', color):
-        color = '#0fc6c2'
+        color = '#0067B8'
     stats = ''
     if p.get('show_stats', True) and panel_base:
         safe_base = re.sub(r'[^A-Za-z0-9_:/.\-]', '', str(panel_base))[:200].rstrip('/')
@@ -3497,6 +3462,10 @@ class H(BaseHTTPRequestHandler):
         if u.path == '/api/page':
             with LOCK:
                 page = json.loads(json.dumps(STATE['page']))
+            page_color = str(page.get('color') or '')
+            if not page_color or page_color == '#0fc6c2':
+                for c in PAGE_DEFS:
+                    page['pages'][c]['color'] = PAGE_DEFS[c]['color']
             defs = {c: {'loc': PAGE_DEFS[c]['loc'], 'title': PAGE_DEFS[c]['title'],
                         'message': PAGE_DEFS[c]['message']} for c in PAGE_DEFS}
             return self._json(200, {'ok': True, 'page': page, 'defs': defs})
