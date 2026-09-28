@@ -40,7 +40,7 @@ gh repo clone Fairen8/slext /tmp/slext && cd /tmp/slext && sudo bash install.sh 
 
 ## CI/CD
 
-- `dev` — рабочая ветка (PR + 1 одобрение);
+- `main` — рабочая ветка (PR + 1 одобрение участника);
 - **`prod` — деплой: мерж только через PR с одобрением владельца**; после мержа GitHub Actions
   автоматически выкатывает версию на сервер (проверки → tar-over-ssh → `slext-deploy` с бэкапом);
 - `main` — стабильная история (как `prod`).

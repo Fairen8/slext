@@ -54,7 +54,6 @@ jobs:
 
       - name: Валидность JSON (rulesets)
         run: |
-          python3 -m json.tool deploy/rulesets/dev.json >/dev/null
           python3 -m json.tool deploy/rulesets/main.json >/dev/null
           python3 -m json.tool deploy/rulesets/prod.json >/dev/null
           python3 -m json.tool deploy/security-settings.json >/dev/null
