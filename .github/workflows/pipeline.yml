@@ -1,0 +1,136 @@
+name: pipeline
+
+# Единый пайплайн: тесты кода → политика → деплой. Провал любого шага блокирует следующий.
+#  * pull_request → prod: обязательный чек `tests` (без него merge заблокирован);
+#  * push → prod (результат мержа): tests → policy → deploy (после подтверждения окружения);
+#  * вручную (Run workflow): policy пропускается, tests и подтверждение окружения работают.
+on:
+  pull_request:
+    branches: [prod]
+  push:
+    branches: [prod]
+  workflow_dispatch:
+
+concurrency:
+  group: pipeline-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  tests:
+    name: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Синтаксис Python
+        run: python3 -m py_compile bin/*.py
+
+      - name: Тесты политики зала ожидания
+        run: python3 tests/wr_policy_test.py
+
+      - name: Синтаксис JavaScript
+        run: node --check www/ext.js
+
+      - name: Синтаксис Shell
+        run: |
+          bash -n install.sh
+          bash -n uninstall.sh
+          bash -n bin/apply-injection.sh
+          bash -n tests/verify-install.sh
+          bash -n deploy/slext-deploy.sh
+          bash -n deploy/install-deploy-access.sh
+          bash -n deploy/check-pr-approval.sh
+          bash -n deploy/apply-github-protection.sh
+
+      - name: Валидность JSON (rulesets)
+        run: |
+          python3 -m json.tool deploy/rulesets/main.json >/dev/null
+          python3 -m json.tool deploy/rulesets/prod.json >/dev/null
+          python3 -m json.tool deploy/security-settings.json >/dev/null
+
+      - name: Патчер содержит ключевые маркеры
+        run: |
+          grep -q 'slext-px-format' bin/patch_site_page.py
+          grep -q 'slext-gate' bin/patch_site_page.py
+          grep -q 'slext-skip' bin/patch_site_page.py
+
+      - name: Бэкапы nginx вне include-каталогов
+        run: |
+          if grep -q '"\$f\.slext-orig"' bin/apply-injection.sh; then
+            echo "::error::Бэкап конфига пишется в sites-enabled — сломает nginx -t и зал ожидания"; exit 1
+          fi
+          grep -q 'slext-backup-moved' bin/apply-injection.sh
+
+      - name: Секреты не закоммичены
+        run: |
+          set -e
+          if grep -rIn --exclude-dir=.git -E 'PGPASSWORD=[A-Za-z0-9]{6,}$' . ; then
+            echo "::error::Найден похожий на реальный пароль PGPASSWORD"; exit 1
+          fi
+          if grep -rIn --exclude-dir=.git -E 'BEGIN (RSA|OPENSSH|EC) PRIVATE KEY' . ; then
+            echo "::error::Найден приватный ключ"; exit 1
+          fi
+          echo "Секретов не найдено"
+
+  policy:
+    name: policy
+    needs: [tests]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Проверка процесса (в prod только из main, подтверждение владельца)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          OWNER: Fairen8
+        run: bash deploy/check-pr-approval.sh
+
+  deploy:
+    name: deploy (prod)
+    needs: [tests, policy]
+    if: >
+      always() &&
+      github.event_name != 'pull_request' &&
+      needs.tests.result == 'success' &&
+      (needs.policy.result == 'success' || needs.policy.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Настройка SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id
+          chmod 600 ~/.ssh/id
+          ssh-keyscan -p "${{ secrets.SSH_PORT }}" -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Выгрузка репозитория на сервер (staging, tar-over-ssh)
+        run: |
+          tar --exclude=.git -czf - . | \
+            ssh -i ~/.ssh/id -p "${{ secrets.SSH_PORT }}" -o StrictHostKeyChecking=accept-new \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "rm -rf /tmp/slext-stage && mkdir -p /tmp/slext-stage && tar -xzf - -C /tmp/slext-stage"
+
+      - name: Применение на сервере (идемпотентно, с бэкапом)
+        run: |
+          ssh -i ~/.ssh/id -p "${{ secrets.SSH_PORT }}" \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "sudo -n /usr/local/bin/slext-deploy"
