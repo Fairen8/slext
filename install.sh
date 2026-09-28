@@ -98,6 +98,7 @@ cp -a "$SRC/systemd/." /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now slext-api.service
 systemctl enable --now slext-apply.path slext-apply.timer
+systemctl enable --now slext-watchdog.timer
 
 echo "[6/8] Применяю патчи к SafeLine (идемпотентно)..."
 bash /opt/slext/bin/apply-injection.sh

@@ -1,5 +1,8 @@
 name: deploy
 
+# Выкатка на сервер: только push в prod (результат смерженного PR из main).
+# Порядок: policy → tests → deploy. Провал любого шага блокирует следующий.
+# Сам деплой дополнительно ждёт подтверждения окружения production.
 on:
   push:
     branches: [prod]
@@ -9,35 +12,42 @@ concurrency:
   group: deploy-prod
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
-  checks:
+  policy:
+    name: policy
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      - name: Проверка процесса (в prod только из main, PR + одобрение владельца)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          OWNER: Fairen8
+        run: bash deploy/check-pr-approval.sh
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Синтаксис Python/JS/Shell
-        run: |
-          python3 -m py_compile bin/*.py
-          node --check www/ext.js
-          bash -n install.sh
-          bash -n uninstall.sh
-          bash -n bin/apply-injection.sh
-          bash -n deploy/slext-deploy.sh
-          bash -n deploy/install-deploy-access.sh
+  tests:
+    name: tests
+    uses: ./.github/workflows/ci.yml
 
   deploy:
-    needs: checks
+    name: deploy (prod)
+    needs: [policy, tests]
+    if: >
+      always() &&
+      needs.tests.result == 'success' &&
+      (needs.policy.result == 'success' || needs.policy.result == 'skipped')
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Настройка SSH
         run: |

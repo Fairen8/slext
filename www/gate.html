@@ -1,30 +1,40 @@
 <!doctype html>
-<html lang="ru">
+<html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>NRG / INDEX</title>
+<title>Protected By SafeLine WAF</title>
 <style>
-html,body{height:100%;margin:0;background:radial-gradient(900px 500px at 20% -10%,rgba(15,198,194,.18),transparent 60%),radial-gradient(700px 420px at 110% 120%,rgba(15,198,194,.12),transparent 58%),linear-gradient(160deg,#070b12,#0d1420);color:#e8eef7;font-family:ui-sans-serif,system-ui,"Segoe UI",Roboto,Arial,sans-serif;display:flex;align-items:center;justify-content:center;-webkit-font-smoothing:antialiased}
-.card{background:rgba(22,30,44,.85);border:1px solid rgba(255,255,255,.09);border-radius:24px;padding:34px 44px;text-align:center;box-shadow:0 34px 90px -34px rgba(0,0,0,.6);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
-.brand{font-weight:800;letter-spacing:.2em;font-size:13px;color:#93a4bd;text-transform:uppercase}
-.dots{display:inline-flex;gap:6px;margin:18px 0 8px}
-.dots i{width:8px;height:8px;border-radius:50%;background:#0fc6c2;opacity:.35;animation:bl 1.2s infinite}
-.dots i:nth-child(2){animation-delay:.15s}
-.dots i:nth-child(3){animation-delay:.3s}
-@keyframes bl{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-3px)}}
-.foot{font-size:11px;letter-spacing:.18em;color:#93a4bd;text-transform:uppercase}
+:root{--primary-color:#0067B8;--light-primary-color:#9AC3E3;--font-color:#FFFFFF;--light-font-color:#B3D1E9}
+html,body{height:100%;margin:0}
+body{font-family:PingFang SC,Helvetica Neue,Helvetica,Arial,sans-serif}
+#slg-bg{background-color:var(--primary-color);z-index:100;width:100%;height:100%;position:fixed;inset:0}
+#slg-box{z-index:300;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%)}
+#slg-loader{position:relative;width:64px;height:64px}
+#slg-loader i{position:absolute;top:calc(50% - 5px);left:calc(50% - 5px);width:10px;height:10px;border-radius:50%;background-color:var(--font-color);animation:slg-pulse 1.5s infinite}
+#slg-loader i:nth-child(1){top:calc(50% - 27px)}
+#slg-loader i:nth-child(2){top:calc(50% - 11.8px);left:calc(50% + 15.92px);animation-delay:.15s}
+#slg-loader i:nth-child(3){top:calc(50% + 12.8px);left:calc(50% + 7.93px);animation-delay:.3s}
+#slg-loader i:nth-child(4){top:calc(50% + 12.8px);left:calc(50% - 17.93px);animation-delay:.45s}
+#slg-loader i:nth-child(5){top:calc(50% - 11.8px);left:calc(50% - 25.92px);animation-delay:.6s}
+@keyframes slg-pulse{0%,100%{opacity:.2;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}
+#slg-copyright{position:fixed;bottom:0;left:0;z-index:2000;width:100%;padding-bottom:1.5rem;text-align:center;color:var(--light-font-color);font-size:.8rem;line-height:2rem}
+#slg-copyright svg{display:block;margin:0 auto .25rem}
+#slg-name{color:var(--font-color)}
 </style>
 </head>
 <body>
-<div class="card">
-  <div class="brand">NRG / INDEX</div>
-  <div class="dots"><i></i><i></i><i></i></div>
-  <div class="foot">Защищено · проверка</div>
+<div id="slg-bg"></div>
+<div id="slg-box">
+  <div id="slg-loader"><i></i><i></i><i></i><i></i><i></i></div>
+</div>
+<div id="slg-copyright">
+  <svg id="slg-logo" width="32" height="35"><g fill="var(--font-color)"><path d="M15.006.33c.602-.44 1.4-.44 2.002 0 1.985 1.444 6.911 4.473 12.901 4.631.78.035 1.418.599 1.577 1.356.922 4.754 2.605 20.848-15.452 28.35C-2.077 27.183-.43 11.07.528 6.317c.142-.757.815-1.32 1.577-1.356 5.99-.158 10.863-3.187 12.9-4.63m1.037 4.54c-.28 1.647-2.15 1.938-2.15 1.938-1.9.309-2.819-1.12-2.819-1.12.82 2.255 2.198 2.391 2.446 2.397h2.423c-.7 1.802-3.48 2.133-3.48 2.133-3.159.39-4.689-1.423-4.689-1.423q.17.357.358.66l-.008-.005a11 11 0 0 0-3.106 7.671c0 6.09 4.937 11.026 11.026 11.026 6.09 0 11.027-4.936 11.027-11.026a11 11 0 0 0-3.11-7.674q.185-.3.353-.652s-1.53 1.816-4.69 1.423c0 0-2.776-.33-3.478-2.132h2.42c.245-.006 1.627-.14 2.448-2.397 0 0-.92 1.428-2.82 1.12-.142-.025-1.882-.356-2.15-1.94"/><polygon points="15.98353 17.9879553 9.8818726 21.4510476 15.3313444 24.6578974 17.2903808 23.6211992 13.5799337 21.4510476 15.98353 20.0985396 20.3159976 22.5564681 20.3159976 23.3648458 22.2042418 24.5010295 22.2042418 21.4510476" transform="rotate(-180 16.043 21.323)"/><polygon points="15.9835296 10.9942305 9.8818722 14.4573228 15.331344 17.6641726 17.2903804 16.6274743 13.5799333 14.4573228 15.9835296 13.1048148 20.3159972 15.5627433 20.3159972 16.371121 22.2042414 17.5073047 22.2042414 14.4573228"/></g></svg>
+  <div id="slg-copyright-text"><span id="slg-prefix">Security Detection Powered By</span> <span id="slg-name">SafeLine WAF</span></div>
 </div>
 <script>
-try { document.cookie = 'nrgpass=1; path=/; max-age=604800; secure; samesite=lax'; } catch (e) {}
+try{document.cookie='nrgpass=1; path=/; max-age=604800; secure; samesite=lax'}catch(e){}
 location.replace(location.pathname + location.search + location.hash);
 </script>
 </body>

@@ -1,0 +1,8 @@
+[Unit]
+Description=SLExt watchdog (API health + panel /extapi proxy)
+After=network.target docker.service slext-api.service
+Wants=slext-api.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/slext/bin/slext-watchdog.sh

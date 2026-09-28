@@ -97,6 +97,39 @@ systemctl list-timers slext-apply.timer
 grep -c '# slext-' /data/safeline/resources/nginx/sites-enabled/IF_*
 ```
 
+## Зал ожидания: не включается/выключается или «вечная загрузка»
+
+Переключение идёт через SafeLine с подтверждением факта (до ~10 с); после каждой операции патчи
+сайта восстанавливаются в фоне, а воркер раз в 20 с проверяет маркеры и чинит их сам. Если зал
+«не слушается» — по порядку:
+
+```bash
+# 1) фактическое состояние в SafeLine и наше состояние
+docker exec safeline-pg psql -U safeline-ce -d safeline-ce -tAc "SELECT is_enabled, updated_at FROM mgt_waiting_room"
+
+# 2) конфиг tengine валиден? (при поломке mgt не может переключить зал)
+docker exec safeline-tengine nginx -t
+
+# 3) патчи и страница очереди на месте?
+grep -c '# slext-' /data/safeline/resources/nginx/sites-enabled/IF_*
+grep -c 'slext-waiting-page' /data/safeline/resources/nginx/slext-pages/waiting_room.html
+# нет — восстановить: bash /opt/slext/bin/apply-injection.sh
+
+# 4) ошибки API и SafeLine
+journalctl -u slext-api -n 80 | tail -40
+docker logs safeline-mgt --since 10m 2>&1 | grep level=ERROR
+```
+
+Типовые причины:
+- `check jwt failed: user tfa enabled, but jwt not contain tfa` в mgt — панель отклонила токен;
+  SLExt сам выбирает рабочий токен (кеш 5 мин), перезапуск API ускоряет выбор:
+  `systemctl restart slext-api`.
+- `duplicate "log_format" ... nginx: configuration test failed` — в `sites-enabled` попал бэкап
+  конфига; `apply-injection.sh` уносит такие файлы в `/opt/slext/backups/nginx/`.
+- Кнопка «Переключить (состояние неизвестно)» — SafeLine недоступен; смотрите пункт 4.
+
+Юнит-тесты политики авто-режима: `python3 tests/wr_policy_test.py`.
+
 ## Страница очереди — стоковая
 
 ```bash

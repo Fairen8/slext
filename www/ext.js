@@ -2,7 +2,7 @@
   'use strict';
 
   var API = location.origin + '/extapi';
-  var EXTVER = '39';
+  var EXTVER = '50';
 
   function tok() {
     try { return localStorage.getItem('safeline_auth') || ''; } catch (e) { return ''; }
@@ -68,6 +68,13 @@
   function applyTheme(dark) {
     document.documentElement.classList.toggle('slext-dark', !!dark);
     try { localStorage.setItem('slext_dark', dark ? '1' : '0'); } catch (e) {}
+    redrawWorkspace();
+  }
+
+  function redrawWorkspace() {
+    var host = document.getElementById('sl-tab-' + SL_TAB);
+    if (host) host.innerHTML = '';
+    try { renderWorkspaceTab(); } catch (e) {}
   }
 
   function initTheme() {
@@ -145,15 +152,13 @@
     ['lt', 'Тест ёмкости'],
     ['pages', 'Страницы'],
     ['sec', 'Безопасность'],
-    ['notify', 'Уведомления'],
-    ['access', 'Доступ']
+    ['notify', 'Уведомления']
   ];
   var SL_TAB = 'overview';
   var SL_ME = null;
   var TAB_PERM = {
     overview: 'overview.view', proxy: 'proxy.view', dns: 'dns.view', wr: 'wr.view',
-    lt: 'lt.view', pages: 'pages.view', sec: 'skip.view', notify: 'notify.view',
-    access: 'access.manage'
+    lt: 'lt.view', pages: 'pages.view', sec: 'skip.view', notify: 'notify.view'
   };
 
   function can(p) {
@@ -240,10 +245,16 @@
       return '<div class="sl-tabpane" id="sl-tab-' + t[0] + '"></div>';
     }).join('');
     a = el('<div id="sl-app">' +
-      '<div id="sl-app-head"><b>SLExt</b><span class="sl-badge">расширения SafeLine</span>' +
+      '<div id="sl-app-head">' +
+      '<span class="sl-crumb">SLExt</span>' +
+      '<span class="sl-crumb-sep">&rsaquo;</span>' +
+      '<span class="sl-tabname" id="sl-app-tab-name">Обзор</span>' +
       '<span class="sl-badge" id="sl-app-user"></span>' +
-      '<span class="sl-hint" id="sl-app-status" style="margin:0"></span>' +
-      '<button id="sl-app-close" title="Закрыть">&times;</button></div>' +
+      '<span class="sl-hint" id="sl-app-status"></span>' +
+      '<button id="sl-app-close" title="Закрыть" aria-label="Закрыть">' +
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">' +
+      '<path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>' +
+      '</svg></button></div>' +
       '<div id="sl-app-tabs">' + tabs + '</div>' +
       '<div id="sl-app-body">' + panes + '</div></div>');
     document.body.appendChild(a);
@@ -295,6 +306,8 @@
     for (var i = 0; i < btns.length; i++) {
       btns[i].classList.toggle('on', btns[i].getAttribute('data-tab') === SL_TAB);
     }
+    var nameEl = document.getElementById('sl-app-tab-name');
+    if (nameEl) for (var k = 0; k < SL_TABS.length; k++) if (SL_TABS[k][0] === SL_TAB) { nameEl.textContent = SL_TABS[k][1]; break; }
     var panes = document.querySelectorAll('#sl-app .sl-tabpane');
     for (var j = 0; j < panes.length; j++) {
       panes[j].style.display = (panes[j].id === 'sl-tab-' + SL_TAB) ? 'block' : 'none';
@@ -352,7 +365,6 @@
     else if (SL_TAB === 'pages') { renderPageCard(host); }
     else if (SL_TAB === 'sec') { renderSkipCard(host); renderGeoCard(host); }
     else if (SL_TAB === 'notify') { renderNotifyCard(null, null, host); }
-    else if (SL_TAB === 'access') { renderAccessCard(host); }
   }
 
   function refreshWrCard() {
@@ -383,6 +395,10 @@
     return n + ' Б';
   }
 
+  function slVar(name, fallback) {
+    try { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback; } catch (e) { return fallback; }
+  }
+
   function canvasLine(canvas, values) {
     if (!canvas || !values.length) return;
     var dpr = window.devicePixelRatio || 1;
@@ -409,9 +425,11 @@
       chart.setOption({
         grid: { left: 40, right: 12, top: 20, bottom: 26 },
         tooltip: { trigger: 'axis' },
+        color: slVar('--sl-primary', '#0fc6c2'),
         xAxis: { type: 'category', data: points.map(function (p) { return p.label; }),
-                 axisLabel: { fontSize: 10 } },
-        yAxis: { type: 'value', splitLine: { lineStyle: { opacity: 0.2 } } },
+                 axisLabel: { fontSize: 10, color: slVar('--sl-text3', 'rgba(0,0,0,.5)') } },
+        yAxis: { type: 'value', axisLabel: { color: slVar('--sl-text3', 'rgba(0,0,0,.5)') },
+                 splitLine: { lineStyle: { opacity: 0.2, color: slVar('--sl-divider', '#E3E8EF') } } },
         series: [{ type: 'line', smooth: true, areaStyle: { opacity: 0.15 },
                    name: label || 'count', data: points.map(function (p) { return p.value; }) }]
       });
@@ -966,9 +984,10 @@
     var max = (rows || []).reduce(function (m, r) { return Math.max(m, r.count || 0); }, 1);
     return '<div class="sl-bars">' + ((rows || []).map(function (r) {
       var w = Math.round(((r.count || 0) / max) * 100);
-      return '<div class="sl-bar"><div class="sl-bar-label">' + esc(r.label) + '</div>' +
-        '<div class="sl-bar-track"><div class="sl-bar-fill" style="width:' + w + '%"></div></div>' +
-        '<div class="sl-bar-val">' + fmtNum(r.count) + '</div></div>';
+      return '<div class="sl-bar">' +
+        '<div class="sl-bar-head"><span class="sl-bar-label">' + esc(r.label) + '</span>' +
+        '<span class="sl-bar-val">' + fmtNum(r.count) + '</span></div>' +
+        '<div class="sl-bar-track"><div class="sl-bar-fill" style="width:' + w + '%"></div></div></div>';
     }).join('') || '<div class="sl-hint">Нет данных</div>') + '</div>';
   }
 
@@ -1268,7 +1287,7 @@
         '<div class="sl-hint">Заменяют стандартные страницы SafeLine (403 · 404 · 429 · 465 · 466 · 502 · 504) на свои и работают вместо заблокированного раздела Blocking Pages → Custom HTML. Применяется ко всем сайтам.</div>' +
         '<div class="sl-row"><label><input type="checkbox" id="sl-pg-en"' + (p.enabled ? ' checked' : '') + '> включено</label>' +
         '<label>Бренд</label><input class="sl-input" id="sl-pg-brand" value="' + esc(p.brand) + '">' +
-        '<label>Цвет</label><input class="sl-input sl-w" id="sl-pg-color" value="' + esc(p.color) + '"></div>' +
+        '<label>Цвет</label><input class="sl-input sl-w" id="sl-pg-color" value="' + esc(p.color) + '" placeholder="по коду страницы"></div>' +
         '<table class="sl-table"><tr><th>Вкл</th><th>Код</th><th>Заголовок</th><th>Текст</th><th></th></tr>' + rows + '</table>' +
         '<div class="sl-row"><button class="sl-btn sl-btn-pri" id="sl-pg-save">Сохранить и применить</button></div></div>');
       host.appendChild(card);
@@ -1302,7 +1321,7 @@
       return {
         enabled: !!((document.getElementById('sl-pg-en') || {}).checked),
         brand: ((document.getElementById('sl-pg-brand') || {}).value || 'SafeLine'),
-        color: ((document.getElementById('sl-pg-color') || {}).value || '#0fc6c2'),
+        color: (((document.getElementById('sl-pg-color') || {}).value || '').trim()),
         pages: pages
       };
     }
@@ -1431,148 +1450,288 @@
       (rows || '<tr><td colspan="7" class="sl-hint">Активаций ещё не было</td></tr>') + '</table>';
   }
 
-  function renderWaitingCard(host) {
-    if (document.getElementById('sl-wr-sec') || !host) return;
-    api('/api/waiting').then(function (d) {
-      if (!d || !d.ok || document.getElementById('sl-wr-sec')) return;
-      var cfg = d.cfg || {};
-      var page = cfg.page || {}, sch = cfg.schedule || {}, au = cfg.auto || {}, nf = cfg.notify || {}, st = cfg.state || {};
-      var aru = cfg.auto_run || {}, alog = cfg.auto_log || [];
-      var liveNote = (d.live_rate === null || d.live_rate === undefined) ? '—' : (esc(d.live_rate) + ' зап/мин');
-      var autoLive = 'Сейчас: ' + liveNote +
-        '. Последняя проверка: ' + (aru.last_eval ? new Date(aru.last_eval * 1000).toLocaleTimeString('ru-RU') : 'ещё не было') +
-        (aru.rate !== undefined ? (', тогда трафик ' + esc(aru.rate) + ' зап/мин') : '') +
-        (aru.above !== undefined ? (', счётчики: выше порога ' + esc(aru.above) + '/' + esc(au.hold || 3) +
-                                    ', ниже ' + esc(aru.below) + '/' + esc(au.hold_off || 4)) : '') + '.';
-      var autoLogHtml = alog.length
-        ? ('<div class="sl-sub">Журнал авто-режима</div><table class="sl-table"><tr><th>Время</th><th>Трафик</th><th>Решение</th><th>Причина</th></tr>' +
-           alog.slice(0, 10).map(function (x) {
-             var act = x.action === 'on' ? '<b class="sl-err">включил</b>' :
-                       (x.action === 'off' ? '<b>выключил</b>' : 'ждёт');
-             return '<tr><td>' + (x.ts ? new Date(x.ts * 1000).toLocaleTimeString('ru-RU') : '—') + '</td>' +
-               '<td>' + esc(x.rate) + ' зап/мин</td><td>' + act + '</td><td>' + esc(x.reason) + '</td></tr>';
-           }).join('') + '</table>')
-        : '<div class="sl-hint">Журнал авто-режима пуст (авто выключено или ещё не было проверок).</div>';
-      var mgt = d.mgt || {};
-      var sites = (d.sites || []).map(function (s) {
+  var WR_BOX = null;
+  var WR_TIMER = null;
+  var WR_SITE = '';
+  var WR_LAST = null;
+  var WR_BUSY = false;
+
+  function wrStopPoll() {
+    if (WR_TIMER) { clearTimeout(WR_TIMER); WR_TIMER = null; }
+  }
+
+  function wrSchedule(ms) {
+    wrStopPoll();
+    WR_TIMER = setTimeout(function () {
+      WR_TIMER = null;
+      if (SL_TAB === 'wr' && document.getElementById('sl-wr-sec')) wrLoad(false);
+    }, ms);
+  }
+
+  function wrErr(m) {
+    var e = document.getElementById('sl-wr-err');
+    if (!e) return;
+    if (m) { e.style.display = ''; e.textContent = m; }
+    else { e.style.display = 'none'; e.textContent = ''; }
+  }
+
+  function wrLoad(first) {
+    var url = '/api/waiting' + (WR_SITE ? '?site=' + encodeURIComponent(WR_SITE) : '');
+    api(url).then(function (d) {
+      if (!d || !d.ok) {
+        wrErr((d && d.error) || 'нет данных от API');
+        wrSchedule(8000);
+        return;
+      }
+      wrErr('');
+      WR_LAST = d;
+      if (first || !document.getElementById('sl-wr-sec')) wrBuild(d);
+      wrRender(d);
+      wrSchedule(5000);
+    });
+  }
+
+  function wrAutoLiveText(d) {
+    var cfg = d.cfg || {}, au = cfg.auto || {}, aru = cfg.auto_run || {};
+    var liveNote = (d.live_rate === null || d.live_rate === undefined) ? '—' : (esc(d.live_rate) + ' зап/мин');
+    return 'Сейчас: ' + liveNote +
+      '. Последняя проверка: ' + (aru.last_eval ? new Date(aru.last_eval * 1000).toLocaleTimeString('ru-RU') : 'ещё не было') +
+      (aru.rate !== undefined ? (', тогда трафик ' + esc(aru.rate) + ' зап/мин') : '') +
+      (aru.above !== undefined ? (', счётчики: выше порога ' + esc(aru.above) + '/' + esc(au.hold || 3) +
+        ', ниже ' + esc(aru.below) + '/' + esc(au.hold_off || 4)) : '') + '.';
+  }
+
+  function wrAutoLogHtml(d) {
+    var alog = (d.cfg || {}).auto_log || [];
+    if (!alog.length) return '<div class="sl-hint">Журнал авто-режима пуст (авто выключено или ещё не было проверок).</div>';
+    return '<table class="sl-table"><tr><th>Время</th><th>Трафик</th><th>Решение</th><th>Причина</th></tr>' +
+      alog.slice(0, 10).map(function (x) {
+        var act = x.action === 'on' ? '<b class="sl-err">включил</b>' : (x.action === 'off' ? '<b>выключил</b>' : 'ждёт');
+        return '<tr><td>' + (x.ts ? new Date(x.ts * 1000).toLocaleTimeString('ru-RU') : '—') + '</td>' +
+          '<td>' + esc(x.rate) + ' зап/мин</td><td>' + act + '</td><td>' + esc(x.reason) + '</td></tr>';
+      }).join('') + '</table>';
+  }
+
+  function wrRender(d) {
+    var mgt = d.mgt || {}, cfg = d.cfg || {}, st = cfg.state || {};
+    var known = !!(mgt && typeof mgt.is_enabled === 'boolean');
+    var on = !!mgt.is_enabled;
+    var srcNames = { auto: 'авто по нагрузке', schedule: 'расписание', manual: 'вручную', 'manual-retry': 'вручную (повтор)' };
+    var set = function (id, html) { var e = document.getElementById(id); if (e) e.innerHTML = html; };
+    var setTxt = function (id, txt) { var e = document.getElementById(id); if (e) e.textContent = txt; };
+    var last = (d.stats && d.stats.history && d.stats.history[0]) || null;
+    var wrLast = last
+      ? ('последняя активация ' + new Date(last.started_at * 1000).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }))
+      : 'активаций не было';
+    setTxt('sl-wr-head', (known ? (on ? 'включён' : 'выключен') : 'состояние неизвестно') + ' · ' + wrLast);
+    setTxt('sl-wr-limits', 'Лимиты CE: порог ' + (mgt.max_concurrent || '-') + ', таймаут ' +
+      (mgt.session_timeout || '-') + ' с. Страница очереди — наша, с живой позицией.');
+    setTxt('sl-wr-status', known ? (on ? 'включён' : 'выключен') : 'неизвестно');
+    var bits = 'источник: ' + (srcNames[st.source] || 'вручную');
+    if (d.busy) bits += ' · операция выполняется…';
+    if (st.pending === true || st.pending === false) bits += ' · ожидает переключения';
+    setTxt('sl-wr-src', bits);
+    var btn = document.getElementById('sl-wr-toggle');
+    if (btn) {
+      if (WR_BUSY) { btn.disabled = true; }
+      else {
+        btn.textContent = known ? (on ? 'Выключить' : 'Включить') : 'Переключить';
+        btn.disabled = !known;
+      }
+    }
+    if (st.error) wrErr(String(st.error)); else wrErr('');
+    set('sl-wr-kpis', wrKpis(d.stats));
+    set('sl-wr-bars', barsHtml(((d.stats || {}).timeline || []).map(function (x) {
+      return { label: x.date + ' · людей ' + fmtNum(x.queued || 0), count: x.sessions || 0 };
+    })));
+    set('sl-wr-hist', wrHistoryHtml(d.stats && d.stats.history));
+    setTxt('sl-wr-au-live', wrAutoLiveText(d));
+    set('sl-wr-au-log', wrAutoLogHtml(d));
+    setTxt('sl-wr-updated', 'обновлено ' + new Date().toLocaleTimeString('ru-RU'));
+    var sel = document.getElementById('sl-wr-site');
+    if (sel) {
+      var opts = (d.sites || []).map(function (s) {
         var h = (s.hosts || [''])[0];
         return '<option value="' + esc(h) + '"' + (h === d.host ? ' selected' : '') + '>' + esc(h || ('#' + s.id)) + '</option>';
       }).join('');
-      var dayNames = [['1', 'Пн'], ['2', 'Вт'], ['3', 'Ср'], ['4', 'Чт'], ['5', 'Пт'], ['6', 'Сб'], ['7', 'Вс']];
-      var days = dayNames.map(function (x) {
-        return '<label><input type="checkbox" data-wr-day="' + x[0] + '"' +
-          ((sch.days || []).indexOf(parseInt(x[0], 10)) >= 0 ? ' checked' : '') + '> ' + x[1] + '</label>';
-      }).join(' ');
-      var srcNames = { auto: 'авто по нагрузке', schedule: 'расписание', manual: 'вручную', 'manual-retry': 'вручную (повтор)' };
-      var src = srcNames[st.source] || 'вручную';
-      var last = (d.stats && d.stats.history && d.stats.history[0]) || null;
-      var wrStatus = (mgt.is_enabled ? 'включён' : 'выключен');
-      var wrLast = last
-        ? ('последняя активация ' + new Date(last.started_at * 1000).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }))
-        : 'активаций не было';
-      var wrOpen = ' open';
-      var card = el('<div class="sl-card" id="sl-wr-sec">' +
-        '<details class="sl-details"' + wrOpen + '><summary><b>Зал ожидания</b> <span class="sl-badge">SLExt</span> ' +
-        '<span class="sl-hint" style="display:inline;margin:0">' + esc(wrStatus + ' · ' + wrLast) + '</span></summary>' +
-        '<div class="sl-hint">Лимиты CE: порог ' + esc(mgt.max_concurrent || '-') +
-        ', таймаут ' + esc(mgt.session_timeout || '-') + ' с. Страница очереди — наша, с живой позицией.</div>' +
-        '<div class="sl-row"><label>Сайт</label><select class="sl-input" id="sl-wr-site">' + sites + '</select>' +
-        '<span class="sl-badge" id="sl-wr-status">' + (mgt.is_enabled ? 'включён' : 'выключен') + '</span>' +
-        '<span class="sl-hint">источник: ' + esc(src) + '</span>' +
-        '<button class="sl-btn sl-btn-pri" id="sl-wr-toggle">' + (mgt.is_enabled ? 'Выключить' : 'Включить') + '</button>' +
-        '<button class="sl-btn" id="sl-wr-refresh">Обновить</button></div>' +
-        '<div class="sl-kpis">' + wrKpis(d.stats) + '</div>' +
-        '<div class="sl-sub">Активации по дням</div>' +
-        barsHtml((d.stats && d.stats.timeline || []).map(function (x) {
-          return { label: x.date + ' · людей ' + fmtNum(x.queued || 0), count: x.sessions || 0 };
-        })) +
-        '<details class="sl-details"><summary>Автоматизация: расписание, авто-режим, уведомления</summary>' +
-        '<div class="sl-row"><label><input type="checkbox" id="sl-wr-sch-on"' + (sch.enabled ? ' checked' : '') + '> по расписанию</label>' + days + '</div>' +
-        '<div class="sl-row"><label>с</label><input class="sl-input sl-w" id="sl-wr-from" value="' + esc(sch.from) + '">' +
-        '<label>до</label><input class="sl-input sl-w" id="sl-wr-to" value="' + esc(sch.to) + '"></div>' +
-        '<div class="sl-sub">Авто по нагрузке — точный алгоритм (без случайности)</div>' +
-        '<div class="sl-hint">Считается реальный трафик: HTML-запросы живых посетителей (метод GET, боты и служебные пути /.safeline/ исключены) за окно, в запросах/мин. Зал включится только если: авто включено И трафик ≥ порога включения K проверок подряд И прошло ≥ «запрета» с ручного выключения. Выключится только если зал включён самим авто И трафик ≤ порога выключения M проверок подряд И зал проработал ≥ «паузы». Ручное переключение всегда приоритетнее авто (авто его не отменяет).</div>' +
-        '<div class="sl-row"><label data-sl-tip="Автоматика включается только по этим правилам. Ручное переключение всегда приоритетнее."><input type="checkbox" id="sl-wr-au-on"' + (au.enabled ? ' checked' : '') + '> авто по нагрузке</label>' +
-        '<label data-sl-tip="Реальный трафик живых посетителей (HTML-запросы), при котором зал может включиться, в запросах в минуту.">порог вкл, зап/мин</label><input class="sl-input sl-w" id="sl-wr-th" type="number" min="1" value="' + esc(au.threshold) + '">' +
-        '<label data-sl-tip="Трафик, при котором авто-режим выключит зал, в запросах в минуту.">порог выкл, зап/мин</label><input class="sl-input sl-w" id="sl-wr-thoff" type="number" min="0" value="' + esc(au.off_threshold) + '">' +
-        '<label data-sl-tip="За сколько секунд считается трафик для порога.">окно, с</label><input class="sl-input sl-w" id="sl-wr-win" type="number" min="30" value="' + esc(au.window) + '"></div>' +
-        '<div class="sl-row"><label data-sl-tip="Сколько проверок подряд (проверка каждые 30 с) трафик должен держаться выше порога включения.">проверок подряд для вкл</label><input class="sl-input sl-w" id="sl-wr-au-hold" type="number" min="1" value="' + esc(au.hold || 3) + '">' +
-        '<label data-sl-tip="Сколько проверок подряд трафик должен быть ниже порога выключения.">для выкл</label><input class="sl-input sl-w" id="sl-wr-au-holdoff" type="number" min="1" value="' + esc(au.hold_off || 4) + '">' +
-        '<label data-sl-tip="Минимальное время работы зала, прежде чем авто-режим сможет его выключить.">пауза до авто-выкл, с</label><input class="sl-input sl-w" id="sl-wr-cd" type="number" min="30" value="' + esc(au.cooldown) + '">' +
-        '<label data-sl-tip="После ручного выключения авто-режим не включит зал раньше этого времени.">запрет после ручн. выкл, с</label><input class="sl-input sl-w" id="sl-wr-au-minoff" type="number" min="0" value="' + esc(au.min_off || 600) + '"></div>' +
-        '<div class="sl-hint" id="sl-wr-au-live">' + autoLive + '</div>' + autoLogHtml +
-        '<div class="sl-row"><label><input type="checkbox" id="sl-wr-nf"' + (nf.enabled ? ' checked' : '') + '> уведомления</label></div>' +
-        '<div class="sl-row"><button class="sl-btn sl-btn-pri" id="sl-wr-save-ext">Сохранить автоматизацию</button></div></details>' +
-        '<details class="sl-details"><summary>Страница очереди: тексты и стиль</summary>' +
-        '<div class="sl-row"><label>Заголовок</label><input class="sl-input sl-wide" id="sl-wr-p-title" value="' + esc(page.title) + '"></div>' +
-        '<div class="sl-row"><label>Текст</label><input class="sl-input sl-wide" id="sl-wr-p-msg" value="' + esc(page.message) + '"></div>' +
-        '<div class="sl-row"><label>Заметка</label><input class="sl-input sl-wide" id="sl-wr-p-note" value="' + esc(page.note) + '"></div>' +
-        '<div class="sl-row"><label>Подпись счёта</label><input class="sl-input" id="sl-wr-p-post" value="' + esc(page.posttext) + '">' +
-        '<label>Бренд</label><input class="sl-input" id="sl-wr-p-brand" value="' + esc(page.brand) + '">' +
-        '<label>Цвет</label><input class="sl-input sl-w" id="sl-wr-p-color" value="' + esc(page.color) + '">' +
-        '<label><input type="checkbox" id="sl-wr-p-stats"' + (page.show_stats !== false ? ' checked' : '') + '> статистика на странице</label></div>' +
-        '<div class="sl-row"><button class="sl-btn sl-btn-pri" id="sl-wr-p-save">Сохранить страницу</button>' +
-        '<button class="sl-btn" id="sl-wr-p-preview">Превью</button></div></details>' +
-        '<details class="sl-details"><summary>История активаций</summary>' + wrHistoryHtml(d.stats && d.stats.history) + '</details>' +
-        '</details></div>');
-      host.appendChild(card);
-      lockBtn(card, 'sl-wr-toggle', 'wr.control');
-      lockBtn(card, 'sl-wr-save-ext', 'wr.settings');
-      lockBtn(card, 'sl-wr-p-save', 'wr.settings');
-      card.addEventListener('click', function (e) {
-        var siteEl = document.getElementById('sl-wr-site');
-        var site = siteEl ? siteEl.value : d.host;
-        if (e.target.id === 'sl-wr-toggle') {
-          var cur = (document.getElementById('sl-wr-status') || {}).textContent === 'включён';
-          api('/api/waiting/config', { method: 'POST', body: { site: site, enabled: !cur } }).then(function (r) {
-            toast(r.ok ? ('Зал ожидания ' + (!cur ? 'включён' : 'выключен')) : ('Ошибка: ' + (r.error || '')), !r.ok);
-            if (r.ok) setTimeout(function () { refreshWrCard(); slStatus(); }, 900);
-          });
-          return;
-        }
-        if (e.target.id === 'sl-wr-refresh') { refreshWrCard(); return; }
-        if (e.target.id === 'sl-wr-save-ext') {
-          var dd = [];
-          document.querySelectorAll('[data-wr-day]').forEach(function (c) { if (c.checked) dd.push(parseInt(c.getAttribute('data-wr-day'), 10)); });
-          api('/api/waiting/extras', { method: 'POST', body: { site: site,
-            schedule: { enabled: document.getElementById('sl-wr-sch-on').checked, days: dd,
-                        from: document.getElementById('sl-wr-from').value, to: document.getElementById('sl-wr-to').value },
-            auto: { enabled: document.getElementById('sl-wr-au-on').checked,
-                    threshold: parseInt(document.getElementById('sl-wr-th').value, 10) || 60,
-                    off_threshold: parseInt(document.getElementById('sl-wr-thoff').value, 10) || 20,
-                    window: parseInt(document.getElementById('sl-wr-win').value, 10) || 60,
-                    hold: parseInt(document.getElementById('sl-wr-au-hold').value, 10) || 3,
-                    hold_off: parseInt(document.getElementById('sl-wr-au-holdoff').value, 10) || 4,
-                    cooldown: parseInt(document.getElementById('sl-wr-cd').value, 10) || 600,
-                    min_off: parseInt(document.getElementById('sl-wr-au-minoff').value, 10) || 600 },
-            notify: { enabled: document.getElementById('sl-wr-nf').checked } } })
-            .then(function (r) {
-              toast(r.ok ? 'Автоматизация сохранена' : 'Ошибка', !r.ok);
-              if (r.ok) setTimeout(function () { location.reload(); }, 600);
-            });
-          return;
-        }
-        if (e.target.id === 'sl-wr-p-save' || e.target.id === 'sl-wr-p-preview') {
-          var body = { site: site, page: {
-            title: document.getElementById('sl-wr-p-title').value,
-            message: document.getElementById('sl-wr-p-msg').value,
-            note: document.getElementById('sl-wr-p-note').value,
-            posttext: document.getElementById('sl-wr-p-post').value,
-            brand: document.getElementById('sl-wr-p-brand').value,
-            color: document.getElementById('sl-wr-p-color').value,
-            show_stats: document.getElementById('sl-wr-p-stats').checked
-          } };
-          if (e.target.id === 'sl-wr-p-preview') {
-            var w = window.open('', '_blank');
-            api('/api/waiting/page', { method: 'POST', body: Object.assign({ preview: 1 }, body) })
-              .then(function (r) { if (w && r.html) { w.document.write(r.html); w.document.close(); } });
-          } else {
-            api('/api/waiting/page', { method: 'POST', body: body })
-              .then(function (r) { toast(r.ok ? 'Страница очереди обновлена' : ('Ошибка: ' + (r.info || '')), !r.ok); });
+      if (sel.innerHTML !== opts) sel.innerHTML = opts;
+      WR_SITE = d.host || WR_SITE;
+    }
+  }
+
+  function wrBuild(d) {
+    var cfg = d.cfg || {};
+    var mgt = d.mgt || {};
+    var lim = (d.limits && (d.limits.desired && Object.keys(d.limits.desired).length
+                            ? d.limits.desired : d.limits.actual)) || {};
+    var page = cfg.page || {}, sch = cfg.schedule || {}, au = cfg.auto || {}, nf = cfg.notify || {};
+    var dayNames = [['1', 'Пн'], ['2', 'Вт'], ['3', 'Ср'], ['4', 'Чт'], ['5', 'Пт'], ['6', 'Сб'], ['7', 'Вс']];
+    var days = dayNames.map(function (x) {
+      return '<label><input type="checkbox" data-wr-day="' + x[0] + '"' +
+        ((sch.days || []).indexOf(parseInt(x[0], 10)) >= 0 ? ' checked' : '') + '> ' + x[1] + '</label>';
+    }).join(' ');
+    var card = el('<div class="sl-card" id="sl-wr-sec">' +
+      '<details class="sl-details" open><summary><b>Зал ожидания</b> <span class="sl-badge">SLExt</span> ' +
+      '<span class="sl-hint" style="display:inline;margin:0" id="sl-wr-head">загрузка…</span></summary>' +
+      '<div class="sl-hint" id="sl-wr-limits"></div>' +
+      '<div class="sl-row"><label>Сайт</label><select class="sl-input" id="sl-wr-site"></select>' +
+      '<span class="sl-badge" id="sl-wr-status">—</span>' +
+      '<span class="sl-hint" id="sl-wr-src"></span>' +
+      '<button class="sl-btn sl-btn-pri" id="sl-wr-toggle">…</button>' +
+      '<button class="sl-btn" id="sl-wr-refresh">Обновить</button></div>' +
+      '<div class="sl-err" id="sl-wr-err" style="display:none"></div>' +
+      '<div class="sl-kpis" id="sl-wr-kpis"></div>' +
+      '<div class="sl-sub">Активации по дням</div><div id="sl-wr-bars"></div>' +
+      '<div class="sl-hint" id="sl-wr-updated"></div>' +
+      '<details class="sl-details"><summary>Лимиты зала (SafeLine)</summary>' +
+      '<div class="sl-hint">Панельный API SafeLine в CE эти значения не меняет — управляем мы. Порог включения: одновременных активных посетителей, при превышении новые встают в очередь. Таймаут сессии: 1–30 (мин). Макс. очередь: 0 — без ограничения. Значения применяются при следующем включении зала.</div>' +
+      '<div class="sl-row"><label data-sl-tip="Сколько одновременных активных посетителей допускается, прежде чем включится очередь.">порог включения, посетителей</label>' +
+      '<input class="sl-input sl-w" id="sl-wr-lim-max" type="number" min="1" max="5000" value="' + esc(lim.max_concurrent || 100) + '">' +
+      '<label data-sl-tip="Сколько минут держится активная сессия посетителя после последнего запроса.">таймаут сессии, мин</label>' +
+      '<input class="sl-input sl-w" id="sl-wr-lim-to" type="number" min="1" max="30" value="' + esc(lim.session_timeout || 3) + '">' +
+      '<label data-sl-tip="Предел очереди; 0 — без ограничения.">макс. очередь</label>' +
+      '<input class="sl-input sl-w" id="sl-wr-lim-wait" type="number" min="0" value="' + esc(lim.max_waiting || 0) + '">' +
+      '<button class="sl-btn sl-btn-pri" id="sl-wr-lim-save">Сохранить лимиты</button>' +
+      '<button class="sl-btn" id="sl-wr-lim-reset" title="Перезапустить модуль очереди (сайт может мигнуть 2–5 секунд)">Сбросить очередь</button></div></details>' +
+      '<details class="sl-details"><summary>Автоматизация: расписание, авто-режим, уведомления</summary>' +
+      '<div class="sl-row"><label><input type="checkbox" id="sl-wr-sch-on"' + (sch.enabled ? ' checked' : '') + '> по расписанию</label>' + days + '</div>' +
+      '<div class="sl-row"><label>с</label><input class="sl-input sl-w" id="sl-wr-from" value="' + esc(sch.from) + '">' +
+      '<label>до</label><input class="sl-input sl-w" id="sl-wr-to" value="' + esc(sch.to) + '"></div>' +
+      '<div class="sl-sub">Авто по нагрузке — точный алгоритм (без случайности)</div>' +
+      '<div class="sl-hint">Считается реальный трафик: HTML-запросы живых посетителей (GET, боты и служебные пути исключены) за окно, в запросах/мин. Включение: авто включено И трафик ≥ порога K проверок подряд И прошло ≥ «запрета» с ручного выключения. Выключение: зал включён самим авто И трафик ≤ порога M проверок подряд И зал проработал ≥ «паузы». Ручное переключение всегда приоритетнее авто.</div>' +
+      '<div class="sl-row"><label data-sl-tip="Автоматика включается только по этим правилам. Ручное переключение всегда приоритетнее."><input type="checkbox" id="sl-wr-au-on"' + (au.enabled ? ' checked' : '') + '> авто по нагрузке</label>' +
+      '<label data-sl-tip="Реальный трафик живых посетителей (HTML-запросы), при котором зал может включиться, в запросах в минуту.">порог вкл, зап/мин</label><input class="sl-input sl-w" id="sl-wr-th" type="number" min="1" value="' + esc(au.threshold) + '">' +
+      '<label data-sl-tip="Трафик, при котором авто-режим выключит зал, в запросах в минуту.">порог выкл, зап/мин</label><input class="sl-input sl-w" id="sl-wr-thoff" type="number" min="0" value="' + esc(au.off_threshold) + '">' +
+      '<label data-sl-tip="За сколько секунд считается трафик для порога.">окно, с</label><input class="sl-input sl-w" id="sl-wr-win" type="number" min="30" value="' + esc(au.window) + '"></div>' +
+      '<div class="sl-row"><label data-sl-tip="Сколько проверок подряд (проверка каждые 20 с) трафик должен держаться выше порога включения.">проверок подряд для вкл</label><input class="sl-input sl-w" id="sl-wr-au-hold" type="number" min="1" value="' + esc(au.hold || 3) + '">' +
+      '<label data-sl-tip="Сколько проверок подряд трафик должен быть ниже порога выключения.">для выкл</label><input class="sl-input sl-w" id="sl-wr-au-holdoff" type="number" min="1" value="' + esc(au.hold_off || 4) + '">' +
+      '<label data-sl-tip="Минимальное время работы зала, прежде чем авто-режим сможет его выключить.">пауза до авто-выкл, с</label><input class="sl-input sl-w" id="sl-wr-cd" type="number" min="30" value="' + esc(au.cooldown) + '">' +
+      '<label data-sl-tip="После ручного выключения авто-режим не включит зал раньше этого времени.">запрет после ручн. выкл, с</label><input class="sl-input sl-w" id="sl-wr-au-minoff" type="number" min="0" value="' + esc(au.min_off || 600) + '"></div>' +
+      '<div class="sl-hint" id="sl-wr-au-live"></div><div id="sl-wr-au-log"></div>' +
+      '<div class="sl-row"><label><input type="checkbox" id="sl-wr-nf"' + (nf.enabled ? ' checked' : '') + '> уведомления</label></div>' +
+      '<div class="sl-row"><button class="sl-btn sl-btn-pri" id="sl-wr-save-ext">Сохранить автоматизацию</button></div></details>' +
+      '<details class="sl-details"><summary>Страница очереди: тексты и стиль</summary>' +
+      '<div class="sl-row"><label>Заголовок</label><input class="sl-input sl-wide" id="sl-wr-p-title" value="' + esc(page.title) + '"></div>' +
+      '<div class="sl-row"><label>Текст</label><input class="sl-input sl-wide" id="sl-wr-p-msg" value="' + esc(page.message) + '"></div>' +
+      '<div class="sl-row"><label>Заметка</label><input class="sl-input sl-wide" id="sl-wr-p-note" value="' + esc(page.note) + '"></div>' +
+      '<div class="sl-row"><label>Подпись счёта</label><input class="sl-input" id="sl-wr-p-post" value="' + esc(page.posttext) + '">' +
+      '<label>Бренд</label><input class="sl-input" id="sl-wr-p-brand" value="' + esc(page.brand) + '">' +
+      '<label>Цвет</label><input class="sl-input sl-w" id="sl-wr-p-color" value="' + esc(page.color) + '">' +
+      '<label><input type="checkbox" id="sl-wr-p-stats"' + (page.show_stats !== false ? ' checked' : '') + '> статистика на странице</label></div>' +
+      '<div class="sl-row"><button class="sl-btn sl-btn-pri" id="sl-wr-p-save">Сохранить страницу</button>' +
+      '<button class="sl-btn" id="sl-wr-p-preview">Превью</button></div></details>' +
+      '<details class="sl-details"><summary>История активаций</summary><div id="sl-wr-hist"></div></details>' +
+      '</details></div>');
+    var old = document.getElementById('sl-wr-sec');
+    if (old) old.remove();
+    WR_BOX.appendChild(card);
+    lockBtn(card, 'sl-wr-toggle', 'wr.control');
+    lockBtn(card, 'sl-wr-save-ext', 'wr.settings');
+    lockBtn(card, 'sl-wr-p-save', 'wr.settings');
+    card.addEventListener('click', function (e) {
+      var site = WR_LAST ? WR_LAST.host : WR_SITE;
+      if (e.target.id === 'sl-wr-toggle') {
+        var b = e.target;
+        var cur = !!(WR_LAST && WR_LAST.mgt && WR_LAST.mgt.is_enabled);
+        var want = !cur;
+        WR_BUSY = true;
+        b.disabled = true;
+        b.textContent = want ? 'Включаю…' : 'Выключаю…';
+        api('/api/waiting/config', { method: 'POST', body: { site: site, enabled: want } }).then(function (r) {
+          WR_BUSY = false;
+          b.disabled = false;
+          b.textContent = want ? 'Выключить' : 'Включить';
+          toast(r.ok ? ('Зал ожидания ' + (want ? 'включён' : 'выключен')) : ('Ошибка: ' + (r.error || 'не удалось')), !r.ok);
+          if (r.ok && r.mgt_ok && WR_LAST) {
+            WR_LAST.mgt = r.mgt;
+            WR_LAST.mgt_ok = true;
+            wrRender(WR_LAST);
           }
+          wrLoad(false);
+        });
+        return;
+      }
+      if (e.target.id === 'sl-wr-refresh') { wrLoad(false); return; }
+      if (e.target.id === 'sl-wr-lim-save') {
+        api('/api/waiting/extras', { method: 'POST', body: { site: site, limits: {
+          max_concurrent: parseInt(document.getElementById('sl-wr-lim-max').value, 10) || 100,
+          session_timeout: parseInt(document.getElementById('sl-wr-lim-to').value, 10) || 3,
+          max_waiting: parseInt(document.getElementById('sl-wr-lim-wait').value, 10) || 0 } } })
+          .then(function (r) {
+            toast(r.ok ? 'Лимиты зала сохранены' : ('Ошибка: ' + (r.error || '')), !r.ok);
+            if (r.ok) wrLoad(false);
+          });
+        return;
+      }
+      if (e.target.id === 'sl-wr-lim-reset') {
+        if (!window.confirm('Перезапустить модуль зала ожидания? Сайт может мигнуть 2–5 секунд.')) return;
+        api('/api/waiting/reset', { method: 'POST', body: { site: site } }).then(function (r) {
+          toast(r.ok ? 'Очередь сброшена' : ('Ошибка: ' + (r.error || '')), !r.ok);
+          if (r.ok) wrLoad(false);
+        });
+        return;
+      }
+      if (e.target.id === 'sl-wr-site') {
+        WR_SITE = e.target.value;
+        removeSection('sl-wr-sec');
+        wrStopPoll();
+        if (SL_TAB === 'wr') renderWorkspaceTab();
+        return;
+      }
+      if (e.target.id === 'sl-wr-save-ext') {
+        var dd = [];
+        document.querySelectorAll('[data-wr-day]').forEach(function (c) { if (c.checked) dd.push(parseInt(c.getAttribute('data-wr-day'), 10)); });
+        api('/api/waiting/extras', { method: 'POST', body: { site: site,
+          schedule: { enabled: document.getElementById('sl-wr-sch-on').checked, days: dd,
+                      from: document.getElementById('sl-wr-from').value, to: document.getElementById('sl-wr-to').value },
+          auto: { enabled: document.getElementById('sl-wr-au-on').checked,
+                  threshold: parseInt(document.getElementById('sl-wr-th').value, 10) || 60,
+                  off_threshold: parseInt(document.getElementById('sl-wr-thoff').value, 10) || 20,
+                  window: parseInt(document.getElementById('sl-wr-win').value, 10) || 60,
+                  hold: parseInt(document.getElementById('sl-wr-au-hold').value, 10) || 3,
+                  hold_off: parseInt(document.getElementById('sl-wr-au-holdoff').value, 10) || 4,
+                  cooldown: parseInt(document.getElementById('sl-wr-cd').value, 10) || 600,
+                  min_off: parseInt(document.getElementById('sl-wr-au-minoff').value, 10) || 600 },
+          notify: { enabled: document.getElementById('sl-wr-nf').checked } } })
+          .then(function (r) {
+            toast(r.ok ? 'Автоматизация сохранена' : ('Ошибка: ' + (r.error || '')), !r.ok);
+            if (r.ok) wrLoad(false);
+          });
+        return;
+      }
+      if (e.target.id === 'sl-wr-p-save' || e.target.id === 'sl-wr-p-preview') {
+        var body = { site: site, page: {
+          title: document.getElementById('sl-wr-p-title').value,
+          message: document.getElementById('sl-wr-p-msg').value,
+          note: document.getElementById('sl-wr-p-note').value,
+          posttext: document.getElementById('sl-wr-p-post').value,
+          brand: document.getElementById('sl-wr-p-brand').value,
+          color: document.getElementById('sl-wr-p-color').value,
+          show_stats: document.getElementById('sl-wr-p-stats').checked
+        } };
+        if (e.target.id === 'sl-wr-p-preview') {
+          var w = window.open('', '_blank');
+          api('/api/waiting/page', { method: 'POST', body: Object.assign({ preview: 1 }, body) })
+            .then(function (r) { if (w && r.html) { w.document.write(r.html); w.document.close(); } });
+        } else {
+          api('/api/waiting/page', { method: 'POST', body: body })
+            .then(function (r) { toast(r.ok ? 'Страница очереди обновлена' : ('Ошибка: ' + (r.info || '')), !r.ok); });
         }
-      });
+      }
     });
+  }
+
+  function renderWaitingCard(box) {
+    if (!box) return;
+    WR_BOX = box;
+    if (document.getElementById('sl-wr-sec')) {
+      if (!WR_TIMER) wrSchedule(1000);
+      return;
+    }
+    WR_BOX.appendChild(el('<div class="sl-card" id="sl-wr-sec">' +
+      '<div class="sl-hint">Загрузка зала ожидания…</div>' +
+      '<div class="sl-err" id="sl-wr-err" style="display:none"></div></div>'));
+    wrLoad(true);
   }
 
   /* ------------------------------ load test ------------------------------ */
@@ -1870,34 +2029,37 @@
         var chart = window.echarts.getInstanceByDom(node) || window.echarts.init(node);
         var opt = {
           grid: { left: 50, right: 50, top: 28, bottom: 28 },
-          tooltip: { trigger: 'axis' }
+          tooltip: { trigger: 'axis' },
+          color: [slVar('--sl-primary', '#0fc6c2'), '#6199fe', '#ffd268', '#ff5576']
         };
+        var axc = slVar('--sl-text3', 'rgba(0,0,0,.5)');
+        var gridc = slVar('--sl-divider', '#E3E8EF');
         if (PX_METRIC === 'req') {
-          opt.legend = { data: ['RPS'], right: 0, top: 0, textStyle: { fontSize: 11 } };
-          opt.xAxis = { type: 'category', data: labels, axisLabel: { fontSize: 10 } };
-          opt.yAxis = { type: 'value', name: 'RPS', nameTextStyle: { fontSize: 10 }, splitLine: { lineStyle: { opacity: 0.15 } } };
+          opt.legend = { data: ['RPS'], right: 0, top: 0, textStyle: { fontSize: 11, color: axc } };
+          opt.xAxis = { type: 'category', data: labels, axisLabel: { fontSize: 10, color: axc } };
+          opt.yAxis = { type: 'value', name: 'RPS', nameTextStyle: { fontSize: 10 }, axisLabel: { color: axc }, splitLine: { lineStyle: { opacity: 0.15, color: gridc } } };
           opt.series = [{ name: 'RPS', type: 'line', smooth: true, areaStyle: { opacity: 0.12 },
                           data: tl.map(function (x) { return x.rps; }) }];
         } else if (PX_METRIC === 'bw') {
-          opt.legend = { data: ['отдано, МБ', 'принято, МБ'], right: 0, top: 0, textStyle: { fontSize: 11 } };
-          opt.xAxis = { type: 'category', data: labels, axisLabel: { fontSize: 10 } };
-          opt.yAxis = { type: 'value', name: 'МБ', nameTextStyle: { fontSize: 10 }, splitLine: { lineStyle: { opacity: 0.15 } } };
+          opt.legend = { data: ['отдано, МБ', 'принято, МБ'], right: 0, top: 0, textStyle: { fontSize: 11, color: axc } };
+          opt.xAxis = { type: 'category', data: labels, axisLabel: { fontSize: 10, color: axc } };
+          opt.yAxis = { type: 'value', name: 'МБ', nameTextStyle: { fontSize: 10 }, axisLabel: { color: axc }, splitLine: { lineStyle: { opacity: 0.15, color: gridc } } };
           opt.series = [
             { name: 'отдано, МБ', type: 'line', smooth: true, areaStyle: { opacity: 0.12 }, data: tl.map(function (x) { return x.out_mb; }) },
             { name: 'принято, МБ', type: 'line', smooth: true, data: tl.map(function (x) { return x.in_mb; }) }
           ];
         } else if (PX_METRIC === 'p95') {
-          opt.legend = { data: ['p50, мс', 'p95, мс'], right: 0, top: 0, textStyle: { fontSize: 11 } };
-          opt.xAxis = { type: 'category', data: labels, axisLabel: { fontSize: 10 } };
-          opt.yAxis = { type: 'value', name: 'мс', nameTextStyle: { fontSize: 10 }, splitLine: { lineStyle: { opacity: 0.15 } } };
+          opt.legend = { data: ['p50, мс', 'p95, мс'], right: 0, top: 0, textStyle: { fontSize: 11, color: axc } };
+          opt.xAxis = { type: 'category', data: labels, axisLabel: { fontSize: 10, color: axc } };
+          opt.yAxis = { type: 'value', name: 'мс', nameTextStyle: { fontSize: 10 }, axisLabel: { color: axc }, splitLine: { lineStyle: { opacity: 0.15, color: gridc } } };
           opt.series = [
             { name: 'p50, мс', type: 'line', smooth: true, data: tl.map(function (x) { return x.p50; }) },
             { name: 'p95, мс', type: 'line', smooth: true, areaStyle: { opacity: 0.12 }, data: tl.map(function (x) { return x.p95; }) }
           ];
         } else {
-          opt.legend = { data: ['2xx/3xx', '4xx', '5xx'], right: 0, top: 0, textStyle: { fontSize: 11 } };
-          opt.xAxis = { type: 'category', data: labels, axisLabel: { fontSize: 10 } };
-          opt.yAxis = { type: 'value', splitLine: { lineStyle: { opacity: 0.15 } } };
+          opt.legend = { data: ['2xx/3xx', '4xx', '5xx'], right: 0, top: 0, textStyle: { fontSize: 11, color: axc } };
+          opt.xAxis = { type: 'category', data: labels, axisLabel: { fontSize: 10, color: axc } };
+          opt.yAxis = { type: 'value', axisLabel: { color: axc }, splitLine: { lineStyle: { opacity: 0.15, color: gridc } } };
           opt.series = [
             { name: '2xx/3xx', type: 'bar', stack: 'e', data: tl.map(function (x) { return Math.max(0, x.count - x.e4 - x.e5); }) },
             { name: '4xx', type: 'bar', stack: 'e', data: tl.map(function (x) { return x.e4; }) },
@@ -2072,12 +2234,15 @@
     if (window.echarts) {
       try {
         var ch = window.echarts.getInstanceByDom(node) || window.echarts.init(node);
+        var axc = slVar('--sl-text3', 'rgba(0,0,0,.5)');
+        var gridc = slVar('--sl-divider', '#E3E8EF');
         ch.setOption({
           grid: { left: 48, right: 14, top: 26, bottom: 26 },
           tooltip: { trigger: 'axis' },
-          legend: { right: 0, top: 0, textStyle: { fontSize: 11 } },
-          xAxis: { type: 'category', data: ts, axisLabel: { fontSize: 10 } },
-          yAxis: { type: 'value', name: 'мс', nameTextStyle: { fontSize: 10 }, splitLine: { lineStyle: { opacity: 0.15 } } },
+          color: [slVar('--sl-primary', '#0fc6c2'), '#6199fe', '#ffd268', '#ff5576'],
+          legend: { right: 0, top: 0, textStyle: { fontSize: 11, color: axc } },
+          xAxis: { type: 'category', data: ts, axisLabel: { fontSize: 10, color: axc } },
+          yAxis: { type: 'value', name: 'мс', nameTextStyle: { fontSize: 10 }, axisLabel: { color: axc }, splitLine: { lineStyle: { opacity: 0.15, color: gridc } } },
           series: series
         }, true);
         return;
@@ -2175,11 +2340,46 @@
 
   /* ------------------------------ access matrix ------------------------------ */
 
+  function accessSettingsHost() {
+    var w = document.getElementById('sl-access-wrap');
+    if (w && document.body.contains(w)) return w;
+    var header = findByTextDeep(document, 'management', '#sl-app,#sl-access-sec');
+    var host = null, before = null;
+    if (header && header.parentElement && header.parentElement.parentElement) {
+      var group = header.parentElement;
+      host = group.parentElement;
+      before = group.nextSibling;
+    }
+    if (!host) {
+      var sc = document.querySelector('div[style*="overflow-y"]');
+      host = (sc && sc.children.length) ? sc.children[sc.children.length - 1] : document.body;
+    }
+    w = el('<div id="sl-access-wrap"></div>');
+    if (before && before.parentNode === host) host.insertBefore(w, before);
+    else host.appendChild(w);
+    return w;
+  }
+
+  function renderAccessSettings() {
+    if (location.pathname.indexOf('/system') !== 0 || !can('access.manage')) {
+      removeSection('sl-access-sec');
+      return;
+    }
+    if (document.getElementById('sl-access-sec')) return;
+    var host = accessSettingsHost();
+    if (host) renderAccessCard(host);
+  }
+
   function renderAccessCard(host) {
     if (document.getElementById('sl-access-sec') || !host) return;
     var card = el('<div class="sl-card" id="sl-access-sec">' +
       '<div class="sl-card-title">Доступ — матрица прав <span class="sl-badge">SLExt</span></div>' +
       '<div class="sl-hint">Роли: <b>администратор</b> — всё; <b>оператор</b> — просмотр всех разделов + управление залом, бан в CrowdSec, запуск теста, проверка DNS; <b>наблюдатель</b> — только просмотр; <b>настраиваемый</b> — выбранные права. «Домены» ограничивают пользователя только этими сайтами (пусто — все). Пользователи без настройки получают полный доступ.</div>' +
+      '<div class="sl-row"><b>Создать пользователя панели</b>' +
+      '<input class="sl-input" id="sl-acc-new-name" placeholder="логин (3-64)">' +
+      '<input class="sl-input" id="sl-acc-new-pass" type="password" placeholder="пароль (мин. 8)">' +
+      '<button class="sl-btn sl-btn-pri" id="sl-acc-add">Создать</button></div>' +
+      '<div class="sl-warn" style="margin:6px 0"><b>Важно:</b> SafeLine CE не умеет ограничивать доступ к самой панели (это Pro-функция), поэтому созданный пользователь получит полный доступ к интерфейсу SafeLine. Создавайте учётки только доверенным людям, а ограничения (разделы SLExt и домены) выдавайте в матрице ниже. Нативная кнопка <b>ADD USER</b> в разделе Users открывает эту же форму.</div>' +
       '<div id="sl-access-list"><div class="sl-hint">Загрузка…</div></div></div>');
     host.appendChild(card);
     card.addEventListener('change', function (e) {
@@ -2191,6 +2391,35 @@
       }
     });
     card.addEventListener('click', function (e) {
+      if (e.target.id === 'sl-acc-add') {
+        var nm = (document.getElementById('sl-acc-new-name').value || '').trim();
+        var pw = document.getElementById('sl-acc-new-pass').value || '';
+        api('/api/access/user', { method: 'POST', body: { username: nm, password: pw } }).then(function (r) {
+          toast(r.ok ? ('Пользователь «' + nm + '» создан') : ('Ошибка: ' + (r.error || '')), !r.ok);
+          if (r.ok) { removeSection('sl-access-sec'); renderAccessSettings(); }
+        });
+        return;
+      }
+      var pwBtn = e.target.closest('[data-acc-pw]');
+      if (pwBtn) {
+        var u2 = pwBtn.getAttribute('data-acc-pw');
+        var np = window.prompt('Новый пароль для «' + u2 + '» (минимум 8 символов):');
+        if (!np) return;
+        api('/api/access/user/password', { method: 'POST', body: { username: u2, password: np } }).then(function (r) {
+          toast(r.ok ? 'Пароль изменён' : ('Ошибка: ' + (r.error || '')), !r.ok);
+        });
+        return;
+      }
+      var delBtn = e.target.closest('[data-acc-del]');
+      if (delBtn) {
+        var u3 = delBtn.getAttribute('data-acc-del');
+        if (!window.confirm('Удалить пользователя «' + u3 + '»?')) return;
+        api('/api/access/user/delete', { method: 'POST', body: { username: u3 } }).then(function (r) {
+          toast(r.ok ? 'Пользователь удалён' : ('Ошибка: ' + (r.error || '')), !r.ok);
+          if (r.ok) { removeSection('sl-access-sec'); renderAccessSettings(); }
+        });
+        return;
+      }
       var sv = e.target.closest('[data-acc-save]');
       if (!sv) return;
       var u = sv.getAttribute('data-acc-save');
@@ -2203,7 +2432,7 @@
       api('/api/access/save', { method: 'POST', body: { username: u, role: role, perms: perms, domains: domains } })
         .then(function (r) {
           toast(r.ok ? ('Доступ «' + u + '» сохранён') : ('Ошибка: ' + (r.error || '')), !r.ok);
-          if (r.ok) { removeSection('sl-access-sec'); renderWorkspaceTab(); }
+          if (r.ok) { removeSection('sl-access-sec'); renderAccessSettings(); }
         });
     });
     api('/api/access').then(function (d) {
@@ -2227,6 +2456,8 @@
           '<label>Домены (через запятую, пусто — все)</label>' +
           '<input class="sl-input sl-wide" data-acc-domains list="sl-acc-hosts" value="' + esc((u.domains || []).join(', ')) + '">' +
           '<button class="sl-btn sl-btn-pri" data-acc-save="' + esc(u.username) + '">Сохранить</button>' +
+          '<button class="sl-btn" data-acc-pw="' + esc(u.username) + '" title="Сменить пароль">Пароль</button>' +
+          (u.username === 'admin' ? '' : '<button class="sl-btn sl-btn-danger" data-acc-del="' + esc(u.username) + '" title="Удалить пользователя">Удалить</button>') +
           (u.configured ? '' : '<span class="sl-badge">не настроен — полный доступ</span>') + '</div>' +
           '<div class="sl-perms" data-acc-perms style="' + (u.role === 'custom' ? '' : 'display:none') + '">' +
           '<div class="sl-hint">Права для настраиваемой роли:</div>' + permsHtml + '</div></div>';
@@ -2282,7 +2513,7 @@
           return '<tr><td class="sl-mono">' + esc(x.ip) + '</td><td>' + esc(x.country || '—') + '</td>' +
             '<td>' + esc(x.as_org || '—') + '</td><td>' + esc(x.scenario) + '</td>' +
             '<td>' + esc(x.duration) + '</td><td>' + esc(x.type) + '</td>' +
-            '<td><button class="sl-btn sl-btn-x" data-sl-unban="' + esc(x.ip) + '" title="Снять бан"' +
+            '<td><button class="sl-btn sl-btn-danger" data-sl-unban="' + esc(x.ip) + '" title="Снять бан"' +
             (can('crowdsec.ban') ? '' : ' disabled') + '>unban</button></td></tr>';
         }).join('');
         node.innerHTML = (rows ? '<table class="sl-table"><tr><th>IP</th><th>Страна</th><th>AS</th><th>Сценарий</th><th>Осталось</th><th>Тип</th><th></th></tr>' + rows + '</table>'
@@ -2457,6 +2688,207 @@
     if (b && b.classList && !b.classList.contains('sl-nopro')) b.classList.add('sl-nopro');
   }
 
+  /* -------------------------- add user (native hook) -------------------------- */
+
+  function addUserBtnOf(node) {
+    var b = node && node.closest ? node.closest('button,[role=button],a') : null;
+    if (!b) return null;
+    if (b.id === 'sl-acc-add' || (b.closest && b.closest('#sl-app'))) return null;
+    var t = (b.textContent || '').trim().toUpperCase().replace(/\s+/g, ' ');
+    if (t !== 'ADD USER' && t !== 'ДОБАВИТЬ ПОЛЬЗОВАТЕЛЯ' && t !== '添加用户') return null;
+    return b;
+  }
+
+  function swallowAddUserClick(e) {
+    if (location.pathname.indexOf('/system') !== 0) return;
+    var b = addUserBtnOf(e.target);
+    if (!b) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+    openAddUserDialog();
+  }
+
+  function closeAddUserDialog() {
+    var ov = document.getElementById('sl-umodal');
+    if (ov) ov.remove();
+  }
+
+  function openAddUserDialog() {
+    closeAddUserDialog();
+    var ov = el('<div id="sl-umodal" class="sl-overlay">' +
+      '<div class="sl-modal">' +
+      '<div class="sl-modal-title">Создать пользователя панели <span class="sl-badge">SLExt</span></div>' +
+      '<div class="sl-hint">Логин: 3–64 символа (латиница, цифры, . _ -). Пароль: минимум 8 символов. ' +
+      'Нативная кнопка ADD USER требует Pro-лицензию — учётная запись создаётся кодом SLExt.</div>' +
+      '<div class="sl-row" style="margin-top:10px">' +
+      '<input class="sl-input" id="sl-umodal-name" placeholder="логин" autocomplete="off">' +
+      '<input class="sl-input" id="sl-umodal-pass" type="password" placeholder="пароль" autocomplete="new-password"></div>' +
+      '<div class="sl-err" id="sl-umodal-err" style="display:none;margin-top:8px"></div>' +
+      '<div class="sl-modal-actions">' +
+      '<button class="sl-btn" id="sl-umodal-cancel">Отмена</button>' +
+      '<button class="sl-btn sl-btn-pri" id="sl-umodal-ok">Создать</button></div>' +
+      '</div></div>');
+    document.body.appendChild(ov);
+    var err = function (m) {
+      var e2 = document.getElementById('sl-umodal-err');
+      if (e2) { e2.style.display = ''; e2.textContent = m; }
+    };
+    var submit = function () {
+      var nm = (document.getElementById('sl-umodal-name').value || '').trim();
+      var pw = document.getElementById('sl-umodal-pass').value || '';
+      if (!/^[A-Za-z0-9._-]{3,64}$/.test(nm)) { err('Логин: 3–64 символа (латиница, цифры, . _ -)'); return; }
+      if (pw.length < 8) { err('Пароль: минимум 8 символов'); return; }
+      var ok = document.getElementById('sl-umodal-ok');
+      if (ok) ok.disabled = true;
+      api('/api/access/user', { method: 'POST', body: { username: nm, password: pw } }).then(function (r) {
+        if (ok) ok.disabled = false;
+        if (!r || !r.ok) { err('Ошибка: ' + ((r && r.error) || 'не удалось создать')); return; }
+        toast('Пользователь «' + nm + '» создан — страница обновится');
+        closeAddUserDialog();
+        setTimeout(function () { location.reload(); }, 800);
+      });
+    };
+    ov.addEventListener('click', function (e) {
+      if (e.target === ov || e.target.id === 'sl-umodal-cancel') { closeAddUserDialog(); return; }
+      if (e.target.id === 'sl-umodal-ok') submit();
+    });
+    ov.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closeAddUserDialog();
+      else if (e.key === 'Enter') { e.preventDefault(); submit(); }
+    });
+    setTimeout(function () {
+      var ni = document.getElementById('sl-umodal-name');
+      if (ni) ni.focus();
+    }, 30);
+  }
+
+  /* ------------------------ edit user (native hook) ------------------------ */
+
+  function usersRowOf(node) {
+    var tr = node && node.closest ? node.closest('tr') : null;
+    if (!tr) return null;
+    var tbl = tr.closest('table');
+    if (!tbl) return null;
+    var head = tbl.querySelector('thead');
+    if (!head) return null;
+    var ht = (head.textContent || '').toUpperCase();
+    if (ht.indexOf('2FA') === -1 && ht.indexOf('LAST LOGIN') === -1) return null;
+    var td = node.closest('td');
+    if (!td || td !== tr.lastElementChild) return null;
+    var first = tr.firstElementChild;
+    if (!first) return null;
+    var u = (first.innerText || '').trim().split('\n')[0].trim();
+    return u || null;
+  }
+
+  function swallowUserEditClick(e) {
+    if (location.pathname.indexOf('/system') !== 0) return;
+    var u = usersRowOf(e.target);
+    if (!u) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+    openUserEditor(u);
+  }
+
+  function closeUserEditor() {
+    var ov = document.getElementById('sl-uedit');
+    if (ov) ov.remove();
+  }
+
+  function openUserEditor(username) {
+    closeUserEditor();
+    api('/api/access').then(function (d) {
+      if (!d || !d.ok) { toast('SLExt: не удалось получить права', true); return; }
+      var u = null;
+      (d.users || []).forEach(function (x) { if (x.username === username) u = x; });
+      if (!u) u = { username: username, role: 'admin', perms: [], domains: [], configured: false };
+      var labels = d.role_labels || {};
+      var roleSel = ['admin', 'operator', 'viewer', 'custom'].map(function (r) {
+        return '<option value="' + r + '"' + (u.role === r ? ' selected' : '') + '>' + esc(labels[r] || r) + '</option>';
+      }).join('');
+      var permDefs = (d.perms || []).filter(function (p) { return p.key !== 'access.manage'; });
+      var permsHtml = permDefs.map(function (p) {
+        var on = (u.perms || []).indexOf(p.key) >= 0;
+        return '<label class="sl-perm"><input type="checkbox" data-uedit-perm="' + p.key + '"' + (on ? ' checked' : '') + '> ' + esc(p.label) + '</label>';
+      }).join('');
+      var hosts = d.hosts || [];
+      var ov = el('<div id="sl-uedit" class="sl-overlay">' +
+        '<div class="sl-modal" style="width:min(640px,94vw)">' +
+        '<div class="sl-modal-title">Настройка доступа — «' + esc(username) + '» <span class="sl-badge">SLExt</span></div>' +
+        (u.configured ? '' : '<div class="sl-hint" style="margin-bottom:6px">Пользователь ещё не настроен — сейчас у него полный доступ.</div>') +
+        '<div class="sl-row"><label>Роль</label><select class="sl-input" id="sl-uedit-role">' + roleSel + '</select></div>' +
+        '<div class="sl-perms" id="sl-uedit-perms" style="' + (u.role === 'custom' ? '' : 'display:none') + '">' +
+        '<div class="sl-hint">Права для настраиваемой роли:</div>' + permsHtml + '</div>' +
+        '<div class="sl-row"><label>Домены (через запятую, пусто — все)</label>' +
+        '<input class="sl-input sl-wide" id="sl-uedit-domains" list="sl-uedit-hosts" value="' + esc((u.domains || []).join(', ')) + '"></div>' +
+        '<datalist id="sl-uedit-hosts">' + hosts.map(function (h) { return '<option value="' + esc(h) + '">'; }).join('') + '</datalist>' +
+        '<div class="sl-row"><label>Новый пароль (пусто — не менять)</label>' +
+        '<input class="sl-input" id="sl-uedit-pass" type="password" autocomplete="new-password" placeholder="мин. 8 символов"></div>' +
+        '<div class="sl-err" id="sl-uedit-err" style="display:none;margin-top:8px"></div>' +
+        '<div class="sl-modal-actions">' +
+        (username === 'admin' ? '' : '<button class="sl-btn sl-btn-danger" id="sl-uedit-del" style="margin-right:auto">Удалить</button>') +
+        '<button class="sl-btn" id="sl-uedit-cancel">Отмена</button>' +
+        '<button class="sl-btn sl-btn-pri" id="sl-uedit-save">Сохранить</button></div>' +
+        '</div></div>');
+      document.body.appendChild(ov);
+      var err = function (m) {
+        var e2 = document.getElementById('sl-uedit-err');
+        if (e2) { e2.style.display = ''; e2.textContent = m; }
+      };
+      var done = function (msg) {
+        toast(msg);
+        closeUserEditor();
+        removeSection('sl-access-sec');
+        setTimeout(function () { renderAccessSettings(); }, 300);
+      };
+      var save = function () {
+        err('');
+        var role = document.getElementById('sl-uedit-role').value;
+        var domains = (document.getElementById('sl-uedit-domains').value || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+        var perms = [];
+        if (role === 'custom') {
+          ov.querySelectorAll('[data-uedit-perm]').forEach(function (c) { if (c.checked) perms.push(c.getAttribute('data-uedit-perm')); });
+        }
+        var pw = document.getElementById('sl-uedit-pass').value || '';
+        if (pw && pw.length < 8) { err('Пароль: минимум 8 символов'); return; }
+        var btn = document.getElementById('sl-uedit-save');
+        if (btn) btn.disabled = true;
+        api('/api/access/save', { method: 'POST', body: { username: username, role: role, perms: perms, domains: domains } })
+          .then(function (r) {
+            if (!r || !r.ok) { if (btn) btn.disabled = false; err('Ошибка: ' + ((r && r.error) || 'не сохранилось')); return; }
+            if (!pw) { done('Доступ «' + username + '» сохранён'); return; }
+            api('/api/access/user/password', { method: 'POST', body: { username: username, password: pw } })
+              .then(function (r2) {
+                if (!r2 || !r2.ok) { if (btn) btn.disabled = false; err('Доступ сохранён, но пароль не изменён: ' + ((r2 && r2.error) || '')); return; }
+                done('Доступ и пароль «' + username + '» обновлены');
+              });
+          });
+      };
+      ov.addEventListener('change', function (e) {
+        if (e.target && e.target.id === 'sl-uedit-role') {
+          var box = document.getElementById('sl-uedit-perms');
+          if (box) box.style.display = e.target.value === 'custom' ? '' : 'none';
+        }
+      });
+      ov.addEventListener('click', function (e) {
+        if (e.target === ov || e.target.id === 'sl-uedit-cancel') { closeUserEditor(); return; }
+        if (e.target.id === 'sl-uedit-save') { save(); return; }
+        if (e.target.id === 'sl-uedit-del') {
+          if (!window.confirm('Удалить пользователя «' + username + '»?')) return;
+          api('/api/access/user/delete', { method: 'POST', body: { username: username } }).then(function (r) {
+            if (!r || !r.ok) { err('Ошибка: ' + ((r && r.error) || 'не удалилось')); return; }
+            done('Пользователь «' + username + '» удалён');
+          });
+        }
+      });
+      ov.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') closeUserEditor();
+      });
+    });
+  }
+
   /* ------------------------------ routing ------------------------------ */
 
   function hideStockSections() {
@@ -2531,6 +2963,7 @@
     if (path.indexOf('/attact_events') === 0) renderLogExport(document);
     else removeSection('sl-log-export');
     fixDashError(document);
+    renderAccessSettings();
     if (slWorkOpen()) {
       renderWorkspaceTab();
       if (SL_TAB === 'lt') ltPoll();
@@ -2559,6 +2992,8 @@
   setInterval(versionCheck, 120000);
   document.addEventListener('mousedown', swallowUpstreamClick, true);
   document.addEventListener('click', swallowUpstreamClick, true);
+  document.addEventListener('click', swallowAddUserClick, true);
+  document.addEventListener('click', swallowUserEditClick, true);
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function () { setInterval(route, 1500); route(); startObserver(); });
   } else {

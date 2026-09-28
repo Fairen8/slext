@@ -18,19 +18,26 @@ if ! docker exec safeline-mgt grep -q slext-injected /app/static/index.html; the
   rm -f /tmp/slext-index.html /tmp/slext-index-patched.html
   echo "slext-injection-applied"
 fi
-docker exec safeline-mgt sed -i -E 's|href="/ext/ext\.css(\?v=[0-9]+)?"|href="/ext/ext.css?v=39"|; s|src="/ext/ext\.js(\?v=[0-9]+)?" defer|src="/ext/ext.js?v=39" defer|' /app/static/index.html || true
+EXTV="$(cat /opt/slext/conf/extver 2>/dev/null || echo 50)"
+docker exec safeline-mgt sed -i -E 's|href="/ext/ext\.css(\?v=[0-9]+)?"|href="/ext/ext.css?v='"$EXTV"'"|; s|src="/ext/ext\.js(\?v=[0-9]+)?" defer|src="/ext/ext.js?v='"$EXTV"'" defer|' /app/static/index.html || true
 
-if ! docker exec safeline-mgt grep -q 'slext-extapi' /etc/nginx/conf.d/default.conf; then
-  GW=$(docker network inspect safeline-ce -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null)
-  [ -z "$GW" ] && GW=192.168.0.1
-  docker exec safeline-mgt cat /etc/nginx/conf.d/default.conf > /tmp/slext-def.conf
-  if python3 /opt/slext/bin/patch_mgt_extapi.py /tmp/slext-def.conf /tmp/slext-def-patched.conf "$GW"; then
-    docker cp /tmp/slext-def-patched.conf safeline-mgt:/etc/nginx/conf.d/default.conf
-    docker exec safeline-mgt nginx -t >/dev/null 2>&1 && docker exec safeline-mgt nginx -s reload || true
-    echo "slext-extapi-applied (gw=$GW)"
-  fi
-  rm -f /tmp/slext-def.conf /tmp/slext-def-patched.conf
+GW=$(docker network inspect safeline-ce -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null)
+[ -z "$GW" ] && GW=192.168.0.1
+
+# Разрешаем контейнеру панели ходить в API на docker-мосту (идемпотентно).
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q 'Status: active'; then
+  SUBNET="$(echo "$GW" | cut -d. -f1-3).0/24"
+  ufw allow from "$SUBNET" to any port 8787 proto tcp >/dev/null 2>&1 || true
 fi
+
+docker exec safeline-mgt cat /etc/nginx/conf.d/default.conf > /tmp/slext-def.conf
+OUT=$(python3 /opt/slext/bin/patch_mgt_extapi.py /tmp/slext-def.conf /tmp/slext-def-patched.conf "$GW" 2>&1 || true)
+if [ "$OUT" = "changed" ]; then
+  docker cp /tmp/slext-def-patched.conf safeline-mgt:/etc/nginx/conf.d/default.conf
+  docker exec safeline-mgt nginx -t >/dev/null 2>&1 && docker exec safeline-mgt nginx -s reload || true
+  echo "slext-extapi-applied (gw=$GW)"
+fi
+rm -f /tmp/slext-def.conf /tmp/slext-def-patched.conf
 
 LOGCONF=/data/safeline/resources/nginx/conf.d/zz_slext_access_log.conf
 if [ ! -f "$LOGCONF" ]; then
@@ -68,10 +75,32 @@ if [ ! -f "$CCMAP" ] || ! grep -q 'slext_cc' "$CCMAP" 2>/dev/null; then
 fi
 
 CHANGED=0
+BACKUP_DIR=/opt/slext/backups/nginx
+mkdir -p "$BACKUP_DIR"
+
+# Любые бэкапы внутри include-каталогов ломают nginx -t (duplicate log_format),
+# а вместе с ним — переключение зала ожидания через mgt. Уносим их из include.
+for b in /data/safeline/resources/nginx/sites-enabled/*.slext-orig \
+         /data/safeline/resources/nginx/sites-enabled/*.orig \
+         /data/safeline/resources/nginx/sites-enabled/*.bak \
+         /data/safeline/resources/nginx/conf.d/*.slext-orig \
+         /data/safeline/resources/nginx/conf.d/*.orig \
+         /data/safeline/resources/nginx/conf.d/*.bak; do
+  [ -f "$b" ] || continue
+  mv -f "$b" "$BACKUP_DIR/$(basename "$b")"
+  echo "slext-backup-moved $(basename "$b")"
+  CHANGED=1
+done
+
+SITES=""
 for f in /data/safeline/resources/nginx/sites-enabled/IF_*; do
   [ -f "$f" ] || continue
-  if [ ! -f "$f.slext-orig" ] && ! grep -q '# slext-' "$f"; then
-    cp -a "$f" "$f.slext-orig"
+  case "$f" in
+    *.slext-orig|*.orig|*.bak) continue ;;
+  esac
+  SITES="$SITES $f"
+  if [ ! -f "$BACKUP_DIR/$(basename "$f").slext-orig" ] && ! grep -q '# slext-' "$f"; then
+    cp -a "$f" "$BACKUP_DIR/$(basename "$f").slext-orig"
   fi
   if ! grep -q 'access_log /var/log/nginx/access.log safeline' "$f"; then
     sed -i 's|server_name \(.*\);|server_name \1;\n    access_log /var/log/nginx/access.log safeline;|' "$f"
@@ -84,7 +113,7 @@ for f in /data/safeline/resources/nginx/sites-enabled/IF_*; do
 done
 
 if [ -d /data/safeline/resources/nginx/slext-pages ]; then :; else mkdir -p /data/safeline/resources/nginx/slext-pages; fi
-PAGEOUT=$(python3 /opt/slext/bin/patch_site_page.py /data/safeline/resources/nginx/sites-enabled/IF_* 2>/dev/null || true)
+PAGEOUT=$(python3 /opt/slext/bin/patch_site_page.py $SITES 2>/dev/null || true)
 case "$PAGEOUT" in
   *'patched files: 0'*) ;;
   *'patched files:'*) CHANGED=1 ;;

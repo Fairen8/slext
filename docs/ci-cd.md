@@ -1,29 +1,83 @@
 # CI/CD: деплой на сервер из GitHub
 
-## Ветки
+## Ветки и правила
 
-| Ветка | Назначение |
-|---|---|
-| `dev` | рабочая: сюда идут все изменения, запускается только статический CI |
-| `prod` | **деплой**: push в эту ветку автоматически выкатывает код на сервер |
-| `main` | стабильная история; обновляется вручную (merge из `dev`/`prod`) |
+Поток: **feature → dev → main → prod** (в `prod` можно мёржить только из `main`).
+
+| Ветка | Назначение | Правила |
+|---|---|---|
+| `dev` | рабочая интеграция | PR + 1 одобрение, запрет force-push, linear history |
+| `main` | стабильная | PR **только для участников** + **одобрение владельца** (code owner), запрет force-push |
+| `prod` | **деплой** | PR **только из `main`**, **одобрение владельца** и **обязательные тесты `tests`** — без них merge заблокирован |
+| `feature/*`, `fix/*`, `docs/*` | рабочие ветки | от `dev`, живут до мержа |
+
+«Только для участников» обеспечивается тем, что прямые пуши в `main`/`prod` запрещены
+(rulesets), а мёржить PR может только владелец/участники с правом записи; посторонние с
+форками могут лишь предложить PR.
+
+### Тесты — только в прод-пути
+
+Тесты (`tests`) запускаются **исключительно** при мерже в `prod`:
+
+1. **PR в `prod`** — чек `tests` обязателен (ruleset `prod-protection`): пока тесты не прошли,
+   кнопка merge недоступна. Это единственный обязательный чек во всём репозитории.
+2. **Push в `prod`** (результат мержа) — `deploy.yml` повторно прогоняет те же тесты перед
+   выкаткой; при падении job `deploy` не запускается вовсе.
+
+На PR в `dev`/`main` тесты не гоняются — они не создают шума и не тормозят команду.
+
+### Как это контролируется
+
+1. **Нативные rulesets GitHub** (включаются один раз):
+
+   ```bash
+   bash deploy/apply-github-protection.sh
+   ```
+
+   - `dev`: PR + 1 одобрение, linear history, запрет force-push и удаления;
+   - `main`: PR **только для участников** + **одобрение владельца** (code owner из
+     `CODEOWNERS`), linear history;
+   - `prod`: то же + **обязательный чек `tests`**;
+   - владелец (текущий `gh`-пользователь) получает bypass — команда не может.
+
+2. **CI-контроль (работает всегда):**
+   - `ci.yml` → job `tests` — единственное место с тестами (синтаксис Python/JS/Shell,
+     валидность rulesets, проверка секретов). Вызывается из `deploy.yml` как reusable.
+   - `deploy.yml` → job `policy` — перед выкаткой проверяет, что пуш в `prod` является
+     результатом PR **из `main`**, одобренного владельцем (`deploy/check-pr-approval.sh`).
+   - `branch-guard.yml` — на каждый пуш в `prod`/`main` повторяет проверку; при нарушении
+     создаёт issue и красит workflow.
+
+Ручной запуск деплоя (Actions → deploy → Run workflow) policy не проверяет — это осознанный
+путь для владельца. Тесты и подтверждение окружения при этом всё равно работают.
+
+Дополнительно скрипт включает **secret scanning + push protection** и Dependabot-алерты
+(для публичных репозиториев бесплатно).
 
 ## Как выкатить новую версию
 
 ```bash
-git push origin dev          # изменения
-git push origin dev:prod     # выкатить текущий dev на прод (запустит деплой)
+git push origin feature/my-task        # рабочая ветка
+gh pr create --base dev                # PR в dev (1 одобрение коллеги)
+# после мержа в dev:
+gh pr create --base main --head dev    # PR в main (одобрение владельца)
+gh pr create --base prod --head main   # PR в prod (только из main)
+#   → автоматически запускаются тесты; без зелёного `tests` merge заблокирован
 ```
 
-Пайплайн `.github/workflows/deploy.yml`:
+После мержа в `prod` автоматически запускается `.github/workflows/deploy.yml`:
 
-1. **Проверки** — синтаксис Python/JS/Shell (сломанный код не уедет на сервер).
-2. **Выгрузка** — `rsync` репозитория на сервер в `/tmp/slext-stage` (по SSH-ключу из секретов).
-3. **Применение** — `sudo -n /usr/local/bin/slext-deploy`: идемпотентно собирает новую версию
-   в `/opt/slext.new`, сохраняет `slext.env` и `state.json`, делает бэкап `/opt/slext.old`,
-   применяет патчи (`apply-injection.sh`), перезапускает API и проверяет `/api/health`.
+1. **policy** — проверка: PR из `main`, одобрен владельцем.
+2. **tests** — те же тесты, что гейтили merge (reusable `ci.yml`).
+3. **deploy (prod)** — только если предыдущие шаги зелёные, и после **подтверждения
+   окружения `production`** владельцем. Дальше tar-over-ssh в `/tmp/slext-stage` →
+   `sudo -n /usr/local/bin/slext-deploy` (бэкап `/opt/slext.old`, сохранение
+   `slext.env`/`state.json`, патчи, restart API, health-check).
 
-Ручной запуск: GitHub → Actions → **deploy** → *Run workflow*.
+Любой упавший шаг блокирует следующий: упали тесты — деплоя нет; нет одобрения — деплоя нет.
+
+Ручной запуск: GitHub → Actions → **deploy** → *Run workflow* (policy пропускается,
+тесты и подтверждение окружения остаются).
 
 ## Одноразовая настройка
 
@@ -47,23 +101,20 @@ ssh-copy-id -i ~/.ssh/slext_deploy.pub -p <SSH_PORT> <SSH_USER>@<SSH_HOST>
 
 ### 3. Секреты GitHub
 
-В репозитории → Settings → Secrets and variables → Actions добавить:
-
-| Секрет | Значение |
-|---|---|
-| `SSH_HOST` | адрес сервера |
-| `SSH_PORT` | порт SSH |
-| `SSH_USER` | пользователь (например, `fairen8`) |
-| `SSH_KEY` | приватный ключ деплоя (`~/.ssh/slext_deploy`, целиком) |
-
-Через `gh`:
+SSH-доступ деплоя хранится **на уровне окружения `production`** (не репозитория), чтобы его
+нельзя было получить из произвольных workflow/веток. Значения секретов не отображаются никому;
+после публикации репозитория на окружении включается **обязательное подтверждение владельца** —
+без approve деплой (и секреты) недоступны.
 
 ```bash
-gh secret set SSH_HOST -R <owner>/slext --body "<host>"
-gh secret set SSH_PORT -R <owner>/slext --body "<port>"
-gh secret set SSH_USER -R <owner>/slext --body "<user>"
-gh secret set SSH_KEY  -R <owner>/slext < ~/.ssh/slext_deploy
+gh secret set SSH_HOST --env production -R <owner>/slext --body "<host>"
+gh secret set SSH_PORT --env production -R <owner>/slext --body "<port>"
+gh secret set SSH_USER --env production -R <owner>/slext --body "<user>"
+gh secret set SSH_KEY  --env production -R <owner>/slext < ~/.ssh/slext_deploy
 ```
+
+Репозиторные секреты не используются. Команде выдавайте роль **write** — тогда они смогут
+работать только через PR.
 
 ## Откат
 

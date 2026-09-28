@@ -1,0 +1,59 @@
+name: branch-guard
+
+# Контроль процесса для защищённых веток: любой push в prod/main должен быть
+# результатом PR, одобренного владельцем. При нарушении — issue + красный статус.
+# Дополняет нативные rulesets (branches: prod/main).
+on:
+  push:
+    branches: [prod, main]
+  workflow_dispatch:
+
+concurrency:
+  group: branch-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+
+jobs:
+  policy:
+    name: policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Проверка процесса
+        id: check
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          OWNER: Fairen8
+        run: bash deploy/check-pr-approval.sh
+
+      - name: Сообщить о нарушении
+        if: steps.check.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          gh issue create \
+            --title "Нарушение процесса: push в $BRANCH без одобренного PR" \
+            --label bug \
+            --body "Ветка: \`$BRANCH\`
+          Коммит: \`$SHA\`
+          Автор пуша: @$ACTOR
+
+          Изменения попали в защищённую ветку без PR, одобренного владельцем (@Fairen8).
+          Деплой заблокирован. Порядок работы: ветка → PR → одобрение → merge (см. CONTRIBUTING.md)." \
+            || echo "issue создать не удалось (проверьте права)"
+
+      - name: Итог
+        if: steps.check.outcome == 'failure'
+        run: exit 1
