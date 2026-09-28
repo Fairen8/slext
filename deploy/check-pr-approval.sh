@@ -1,7 +1,10 @@
 #!/bin/bash
-# Проверка процесса перед деплоем: пуш в prod/main должен быть результатом
-# merge pull request, одобренного владельцем (@Fairen8).
-# Используется в CI (deploy.yml, branch-guard.yml). Требует gh + GH_TOKEN.
+# Проверка процесса для защищённых веток (deploy.yml, branch-guard.yml):
+#   * prod — только из main и только с одобрением владельца (@Fairen8);
+#     merge владельца в prod разрешён без сторонних одобрений (он и есть approver).
+#   * main — обычный PR с одобрением любого участника; одобрение владельца НЕ требуется;
+#     merge самого владельца разрешён (bypass).
+# Требует gh + GH_TOKEN.
 set -e
 
 REPO="${REPO:-$GITHUB_REPOSITORY}"
@@ -16,7 +19,7 @@ fi
 PR="${POLICY_PR:-$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '.[0].number // empty' 2>/dev/null || true)}"
 if [ -z "$PR" ]; then
   echo "POLICY FAIL: коммит $SHA не связан с pull request (прямой пуш?)."
-  echo "Правильно: ветка → PR → одобрение @$OWNER → merge в prod."
+  echo "Правильно: ветка → PR → merge (в prod — с одобрением @$OWNER)."
   exit 1
 fi
 
@@ -30,30 +33,33 @@ if [ "$BASE" != "prod" ] && [ "$BASE" != "main" ]; then
   exit 1
 fi
 
-# В прод можно мёржить только из main
-if [ "$BASE" = "prod" ] && [ "$HEAD" != "main" ]; then
-  echo "POLICY FAIL: в prod можно мёржить только из ветки main (PR #$PR: $HEAD -> prod)."
-  exit 1
-fi
-
-OWNER_STATE=$(gh api "repos/$REPO/pulls/$PR/reviews" \
-  --jq "[.[] | select(.user.login==\"$OWNER\")] | last | .state // \"NONE\"")
 APPROVERS=$(gh api "repos/$REPO/pulls/$PR/reviews" \
   --jq '[.[] | select(.state=="APPROVED") | .user.login] | unique | join(",")')
-echo "Одобрения: ${APPROVERS:-нет} (последнее ревью @$OWNER: $OWNER_STATE)"
+MERGED_BY=$(gh api "repos/$REPO/pulls/$PR" --jq '.merged_by.login // ""')
+echo "Одобрения: ${APPROVERS:-нет}; merge выполнил: ${MERGED_BY:-—}"
 
-if [ "$AUTHOR" = "$OWNER" ]; then
-  # PR владельца: достаточно любого одобрения (GitHub запрещает self-approve).
-  if [ -z "$APPROVERS" ]; then
-    echo "POLICY FAIL: PR #$PR автора @$OWNER не имеет ни одного одобрения."
+if [ "$BASE" = "prod" ]; then
+  # В прод можно мёржить только из main.
+  if [ "$HEAD" != "main" ]; then
+    echo "POLICY FAIL: в prod можно мёржить только из ветки main (PR #$PR: $HEAD -> prod)."
     exit 1
   fi
+  # Подтверждение владельца для prod: либо ревью Approve от него, либо его собственный merge.
+  if [ "$AUTHOR" != "$OWNER" ] && [ "$MERGED_BY" != "$OWNER" ]; then
+    OWNER_STATE=$(gh api "repos/$REPO/pulls/$PR/reviews" \
+      --jq "[.[] | select(.user.login==\"$OWNER\")] | last | .state // \"NONE\"")
+    if [ "$OWNER_STATE" != "APPROVED" ]; then
+      echo "POLICY FAIL: PR #$PR в prod не одобрен @$OWNER (нужен Approve или merge владельца)."
+      exit 1
+    fi
+  fi
+  echo "POLICY OK: PR #$PR (прод) — процесс соблюдён."
 else
-  # Чужой PR: обязательно одобрение владельца.
-  if [ "$OWNER_STATE" != "APPROVED" ]; then
-    echo "POLICY FAIL: PR #$PR не одобрен @$OWNER."
+  # main: merge участника должен быть через PR с хотя бы одним одобрением;
+  # одобрение владельца не требуется. Merge самого владельца разрешён.
+  if [ "$AUTHOR" != "$OWNER" ] && [ "$MERGED_BY" != "$OWNER" ] && [ -z "$APPROVERS" ]; then
+    echo "POLICY FAIL: PR #$PR в main не имеет ни одного одобрения участника."
     exit 1
   fi
+  echo "POLICY OK: PR #$PR (main) — процесс соблюдён."
 fi
-
-echo "POLICY OK: PR #$PR одобрен, деплой разрешён."
