@@ -1,13 +1,12 @@
 name: branch-guard
 
 # Контроль процесса для защищённых веток:
-#   * push в prod — результат PR из main с одобрением владельца;
-#   * push в main — результат обычного PR (merge участников разрешён, одобрение владельца
-#     для main не требуется; прямые пуши запрещены rulesets).
-# При нарушении — issue + красный статус. Дополняет нативные rulesets (branches: prod/main).
+#   * push в prod — результат PR из main с подтверждением владельца (Approve или его merge);
+#   * main — рабочая ветка: прямые пуши разрешены, процесс не контролируется.
+# При нарушении (push в prod без PR) — issue + красный статус. Дополняет ruleset prod.
 on:
   push:
-    branches: [prod, main]
+    branches: [prod]
   workflow_dispatch:
 
 concurrency:
