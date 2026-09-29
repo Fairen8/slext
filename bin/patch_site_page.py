@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import json
 import os
 import re
 import sys
@@ -110,7 +111,6 @@ def patch_px_log(text):
 
 QUEUE_GW = os.environ.get('SLEXT_GW', '192.168.0.1')
 QUEUE_MARK = '# slext-queue'
-QUEUE_IF_LINE = 'if ($slext_queue_gate) { rewrite ^ /@slext-queue last; } ' + QUEUE_MARK + '-if'
 QUEUE_LOC = ('    location = /@slext-queue {\n'
              '        alias /etc/nginx/slext-pages/queue.html; ' + QUEUE_MARK + '-loc\n'
              '        default_type text/html;\n'
@@ -120,7 +120,7 @@ QUEUE_LOC = ('    location = /@slext-queue {\n'
              '        tx_intercept off;\n'
              '    }\n')
 QUEUE_PROXY = ('    location ^~ /.safeline/slext/ {\n'
-               '        # ' + QUEUE_MARK + '-proxy\n'
+               '        ' + QUEUE_MARK + '-proxy\n'
                '        proxy_pass http://%s:8787/api/queue/;\n'
                '        proxy_set_header Host $host;\n'
                '        proxy_set_header X-Slext-Host $host;\n'
@@ -130,11 +130,27 @@ QUEUE_PROXY = ('    location ^~ /.safeline/slext/ {\n'
                '        tx_intercept off;\n'
                '        add_header Cache-Control "no-store";\n'
                '    }\n') % QUEUE_GW
+QUEUE_GO_IF = ('if ($slext_queue_go) { return 302 /.safeline/slext/go?to=$request_uri; } '
+               + QUEUE_MARK + '-go')
 
 
-def patch_queue(text):
-    """Наш зал: постоянные локации + условный гейт (вкл/выкл — map-файл)."""
+def queue_enabled_hosts():
+    try:
+        st = json.load(open('/opt/slext/conf/state.json', encoding='utf-8'))
+        return set((st.get('waiting', {}).get('sites', {}) or {}).keys()) and {
+            h for h, c in (st.get('waiting', {}).get('sites', {}) or {}).items()
+            if (c or {}).get('queue', {}).get('enabled')}
+    except Exception:
+        return set()
+
+
+def patch_queue(text, enabled=False):
+    """Наш зал: постоянные локации + rewrite-гейт (управляется map-файлом, без правки при тумблере)."""
     changed = False
+    orig = text
+    if '# # slext-queue' in text:
+        text = text.replace('# # slext-queue', '# slext-queue')
+        changed = True
     if QUEUE_MARK + '-loc' not in text:
         for anchor in ('    location = /@slext-gate {', '    location = /@slext-plain {',
                        '    location = /.safeline/not_found_page {'):
@@ -150,14 +166,28 @@ def patch_queue(text):
             anchor = '    location ^~ /.safeline/challenge/v2/ {'
             text = text.replace(anchor, QUEUE_PROXY + anchor, 1)
             changed = True
-    if QUEUE_MARK + '-if' not in text:
-        m = re.search(r'^([ \t]*)if \(\$slext_gate\) \{ rewrite \^ /@slext-gate last; \}', text, re.M)
-        if not m:
-            m = re.search(r'^([ \t]*)if \(\$slext_skip\) \{ rewrite \^ /@slext-plain last; \}', text, re.M)
-        if m:
-            text = text[:m.start()] + m.group(1) + QUEUE_IF_LINE + '\n' + text[m.start():]
+    # сносим прошлые схемы гейта: map-if и auth_request
+    for rx in (r'^[ \t]*if \(\$slext_queue_gate\)[^\n]*\n',
+               r'^[ \t]*location = /_slext_admit \{.*?\n    \}\n'):
+        text, n = re.subn(rx, '', text, flags=re.M | re.S)
+        changed = changed or bool(n)
+    keep = []
+    for ln in text.split('\n'):
+        if (QUEUE_MARK + '-admit-on') in ln or (QUEUE_MARK + '-ck') in ln \
+                or (QUEUE_MARK + '-403') in ln or (QUEUE_MARK + '-ckh') in ln \
+                or (QUEUE_MARK + '-go') in ln:
             changed = True
-    return text, changed
+            continue
+        keep.append(ln)
+    text = '\n'.join(keep)
+    # постоянный rewrite-гейт: основной локал и @slext-plain (путь с nrgpass)
+    for pat in (r'^([ \t]*)proxy_pass\s+https?://backend_\d+\$request_uri;\n',
+                r'^([ \t]*)proxy_pass\s+https?://backend_\d+;\n'):
+        m = re.search(pat, text, re.M)
+        if m:
+            text = text[:m.start()] + m.group(1) + QUEUE_GO_IF + '\n' + text[m.start():]
+            changed = True
+    return text, changed and (text != orig)
 
 
 GATE_MARK = '# slext-gate'
@@ -325,6 +355,7 @@ def strip_slext(text):
     for rx in (r'[ \t]*location = /@slext-plain \{.*?\n    \}\n',
                r'[ \t]*location = /@slext-gate \{.*?\n    \}\n',
                r'[ \t]*location = /@slext-queue \{.*?\n    \}\n',
+               r'[ \t]*location = /_slext_admit \{.*?\n    \}\n',
                r'[ \t]*location \^~ /\.safeline/slext/ \{.*?\n    \}\n',
                r'[ \t]*location = /.safeline/challenge/v2/challenge.css \{.*?\n    \}\n',
                r'[ \t]*location = /.safeline/static/dynamic.css \{.*?\n    \}\n',
@@ -421,7 +452,12 @@ def patch(path, files):
     changed = changed or ch
     text, ch = patch_gate(text)
     changed = changed or ch
-    text, ch = patch_queue(text)
+    qenabled = False
+    mh = re.search(r'^[ \t]*server_name\s+([^;]+);', text, re.M)
+    if mh:
+        qhost = mh.group(1).split()[0].strip()
+        qenabled = qhost in queue_enabled_hosts()
+    text, ch = patch_queue(text, qenabled)
     changed = changed or ch
     text, ch = patch_px_log(text)
     changed = changed or ch

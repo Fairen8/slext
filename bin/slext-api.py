@@ -1871,17 +1871,40 @@ body{background-color:var(--primary-color);font-family:PingFang SC,Helvetica Neu
 
 def waiting_defaults(host):
     return {
-        'page': {'enabled': True, 'title': 'You Are Now In Line',
-                 'message': 'Please wait — the page will refresh automatically.',
-                 'firstpos': '…', 'posttext': 'People Totally',
-                 'note': 'Do not close this page.',
-                 'brand': 'SafeLine WAF', 'color': '#0067B8', 'show_stats': True},
+        'page': {'enabled': True, 'title': 'Секунду — вы в очереди',
+                 'message': 'Сейчас на сайте много посетителей. Мы держим для вас место, чтобы всё открывалось быстро.',
+                 'firstpos': '…', 'posttext': 'Ваше место из',
+                 'note': 'Страница обновится автоматически, когда подойдёт ваша очередь. Закрывать её не нужно.',
+                 'brand': 'NRG / INDEX', 'color': '#0fc6c2', 'show_stats': True},
         'schedule': {'enabled': False, 'days': [1, 2, 3, 4, 5, 6, 7], 'from': '18:00', 'to': '23:00'},
         'auto': {'enabled': False, 'threshold': 60, 'off_threshold': 20, 'window': 60,
                  'hold': 3, 'hold_off': 4, 'cooldown': 600, 'min_off': 600},
         'notify': {'enabled': True},
         'state': {'enabled': False, 'source': 'manual', 'changed_at': 0},
     }
+
+
+def wr_migrate_page_defaults():
+    """Меняем англоязычные шаблоны SafeLine на наши русские (один раз)."""
+    en = {'You Are Now In Line', 'Too Many People Online', 'Ready Into The Website',
+          'Секунду, вы в очереди'}
+    changed = False
+    with LOCK:
+        sites = STATE.setdefault('waiting', {}).setdefault('sites', {})
+        for host, c in sites.items():
+            p = (c or {}).get('page')
+            if not isinstance(p, dict):
+                continue
+            if (str(p.get('title') or '').strip() in en
+                    or str(p.get('brand') or '') == 'SafeLine WAF'
+                    or 'Please wait' in str(p.get('message') or '')):
+                d = waiting_defaults(host)['page']
+                for k in ('title', 'message', 'note', 'posttext', 'brand', 'color'):
+                    p[k] = d[k]
+                changed = True
+        if changed:
+            save_state(STATE)
+    return changed
 
 
 def waiting_cfg(host):
@@ -1961,91 +1984,108 @@ QUEUE_TEMPLATE = Template('''<!DOCTYPE html>
 <title>Очередь</title>
 <!-- slext-queue-page -->
 <style>
-:root{--accent:#0067B8}
+:root{--accent:#0fc6c2;--bg:#f4f6f9;--card:#ffffff;--text:#0e1626;--muted:#5a6b85;--line:rgba(12,24,48,.08)}
+@media (prefers-color-scheme: dark){:root{--bg:#0c111b;--card:#151c29;--text:#e9eef7;--muted:#93a4bd;--line:rgba(255,255,255,.08)}}
 *{box-sizing:border-box}html,body{height:100%}
 body{margin:0;min-height:100%;display:flex;align-items:center;justify-content:center;padding:24px;
- background:radial-gradient(1200px 620px at 12% -12%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 62%),
- radial-gradient(900px 520px at 112% 112%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 58%),
- linear-gradient(160deg,#070b12,#0d1420);color:#e8eef7;
- font-family:Inter,ui-sans-serif,system-ui,"Segoe UI",Roboto,Arial,sans-serif;-webkit-font-smoothing:antialiased}
-.wrap{width:100%;max-width:600px}
-.card{position:relative;overflow:hidden;background:rgba(22,30,44,.78);border:1px solid rgba(255,255,255,.09);
- border-radius:24px;padding:40px 36px 26px;box-shadow:0 34px 90px -34px rgba(0,0,0,.6);
- backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
-.glow{position:absolute;top:-42%;right:-18%;width:360px;height:360px;pointer-events:none;
- background:radial-gradient(closest-side, color-mix(in srgb, var(--accent) 42%, transparent), transparent);filter:blur(26px);opacity:.55}
-.badge{display:inline-flex;align-items:center;gap:10px;padding:7px 13px;border:1px solid rgba(255,255,255,.09);
- border-radius:999px;color:#93a4bd;font-size:11.5px;letter-spacing:.14em;text-transform:uppercase}
-.ic{width:40px;height:40px;border-radius:13px;display:inline-flex;align-items:center;justify-content:center;
- background:color-mix(in srgb, var(--accent) 17%, transparent);border:1px solid color-mix(in srgb, var(--accent) 36%, transparent);color:var(--accent)}
-.ic svg{width:22px;height:22px}
-h1{font-size:24px;margin:18px 0 8px;letter-spacing:-.01em;font-weight:700}
-p{color:#93a4bd;line-height:1.65;margin:0 0 16px;font-size:15px}
-.queue{display:flex;align-items:baseline;gap:10px;margin:6px 0 2px;flex-wrap:wrap}
-.pos{font-size:clamp(46px,11vw,74px);font-weight:800;letter-spacing:-.04em;line-height:1;
- background:linear-gradient(118deg,var(--accent), color-mix(in srgb, var(--accent) 35%, #fff));
- -webkit-background-clip:text;background-clip:text;color:transparent}
-.oflabel{color:#93a4bd;font-size:14px}
-.dots{display:inline-flex;gap:6px;margin-left:6px}
-.dots i{width:8px;height:8px;border-radius:50%;background:var(--accent);opacity:.35;animation:bl 1.2s infinite}
-.dots i:nth-child(2){animation-delay:.15s}.dots i:nth-child(3){animation-delay:.3s}.dots i:nth-child(4){animation-delay:.45s}
-@keyframes bl{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-3px)}}
-.hint{margin-top:10px;font-size:12.5px;color:#93a4bd}
-.foot{margin-top:24px;padding-top:15px;border-top:1px solid rgba(255,255,255,.09);display:flex;justify-content:space-between;
- align-items:center;color:#93a4bd;font-size:11.5px;letter-spacing:.1em;text-transform:uppercase}
-.dot{width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block;margin-right:8px;
- box-shadow:0 0 12px var(--accent);vertical-align:1px}
-@media (max-width:480px){.card{padding:28px 22px 20px;border-radius:20px}}
+ background:radial-gradient(900px 480px at 85% -10%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 60%),
+ radial-gradient(700px 420px at -10% 110%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 60%), var(--bg);
+ color:var(--text);font-family:Inter,ui-sans-serif,system-ui,"Segoe UI",Roboto,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+.card{width:100%;max-width:520px;background:var(--card);border:1px solid var(--line);border-radius:24px;
+ padding:34px 32px 22px;box-shadow:0 30px 70px -34px rgba(9,20,40,.35)}
+.head{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;letter-spacing:.12em;text-transform:uppercase}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent)}
+h1{font-size:23px;line-height:1.25;margin:16px 0 6px;letter-spacing:-.01em;font-weight:700}
+.msg{color:var(--muted);font-size:14.5px;line-height:1.6;margin:0}
+.ringwrap{display:flex;align-items:center;gap:22px;margin:22px 0 6px}
+.ring{position:relative;width:132px;height:132px;flex:0 0 132px}
+.ring svg{width:132px;height:132px;transform:rotate(-90deg)}
+.ring .bgc{stroke:color-mix(in srgb, var(--accent) 18%, transparent)}
+.ring .fgc{stroke:var(--accent);stroke-linecap:round;transition:stroke-dashoffset .6s ease}
+.ring .num{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:44px;font-weight:800;letter-spacing:-.03em}
+.side .posline{font-size:13px;color:var(--muted);margin:2px 0}
+.side .posline b{color:var(--text);font-size:15px}
+.spin{display:inline-flex;gap:5px;margin-top:10px}
+.spin i{width:7px;height:7px;border-radius:50%;background:var(--accent);opacity:.3;animation:bl 1.2s infinite}
+.spin i:nth-child(2){animation-delay:.15s}.spin i:nth-child(3){animation-delay:.3s}
+@keyframes bl{0%,80%,100%{opacity:.25}40%{opacity:1}}
+.note{margin-top:16px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;color:var(--muted);font-size:12.5px;line-height:1.55}
+.foot{margin-top:20px;padding-top:14px;border-top:1px solid var(--line);display:flex;justify-content:space-between;
+ color:var(--muted);font-size:11px;letter-spacing:.12em;text-transform:uppercase}
+@media (max-width:520px){.card{padding:26px 20px 18px}.ringwrap{flex-direction:column;text-align:center}}
 </style>
 </head>
 <body>
-<div class="wrap"><div class="card"><span class="glow"></span>
-  <span class="badge"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-   stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span> Зал ожидания</span>
-  <h1 id="sl-title">Секунду, вы в очереди</h1>
-  <p id="sl-msg">Сейчас очень много посетителей. Мы держим вас в очереди, чтобы сайт работал быстро.</p>
-  <div class="queue"><span class="pos" id="sl-pos">…</span>
-    <span class="oflabel">Ваше место в очереди из <b id="sl-total">—</b></span>
-    <span class="dots" id="sl-dots"><i></i><i></i><i></i><i></i></span></div>
-  <div class="hint" id="sl-note">Страница обновится автоматически, когда подойдёт ваша очередь.</div>
-  <div class="foot"><span><i class="dot"></i><span id="sl-brand">NRG / INDEX</span></span><span>ЗАЩИЩЕНО NRG / INDEX</span></div>
-</div></div>
+<div class="card">
+  <div class="head"><span class="dot"></span> Зал ожидания</div>
+  <h1 id="sl-title">Секунду — вы в очереди</h1>
+  <p class="msg" id="sl-msg">Сейчас на сайте много посетителей. Мы держим для вас место, чтобы всё открывалось быстро.</p>
+  <div class="ringwrap">
+    <div class="ring">
+      <svg viewBox="0 0 120 120">
+        <circle class="bgc" cx="60" cy="60" r="52" fill="none" stroke-width="10"></circle>
+        <circle class="fgc" id="sl-arc" cx="60" cy="60" r="52" fill="none" stroke-width="10"
+                stroke-dasharray="326.7" stroke-dashoffset="245"></circle>
+      </svg>
+      <div class="num" id="sl-pos">…</div>
+    </div>
+    <div class="side">
+      <div class="posline">Ваше место: <b id="sl-posline">определяем…</b></div>
+      <div class="posline">В очереди сейчас: <b id="sl-total">—</b></div>
+      <span class="spin" id="sl-spin"><i></i><i></i><i></i></span>
+    </div>
+  </div>
+  <div class="note" id="sl-note">Страница обновится автоматически, когда подойдёт ваша очередь. Закрывать её не нужно.</div>
+  <div class="foot"><span id="sl-brand">NRG / INDEX</span><span>Очередь защищена</span></div>
+</div>
 <script>
 (function(){
-  var T={pass:'Готово — входим на сайт',wait:'Вы в очереди',full:'Очередь переполнена, попробуйте позже',
-    conn:'Связь потеряна, восстанавливаем соединение'};
-  var elPos=document.getElementById('sl-pos'),elTotal=document.getElementById('sl-total');
-  var elMsg=document.getElementById('sl-msg'),elDots=document.getElementById('sl-dots');
-  var elTitle=document.getElementById('sl-title'),elNote=document.getElementById('sl-note'),elBrand=document.getElementById('sl-brand');
-  var done=false,delay=1500,fails=0;
-  function ready(){if(done)return;done=true;elMsg.textContent=T.pass;elPos.textContent='\\u2713';elDots.style.display='none';
-    try{document.cookie='nrgpass=1; Path=/; Max-Age=604800; SameSite=Lax';}catch(e){}
-    setTimeout(function(){location.reload();},1200);}
+  var T={pass:'Готово — входим на сайт',wait:'Вы в очереди',full:'Очередь переполнена, попробуйте чуть позже',
+    conn:'Связь потеряна — восстанавливаем соединение'};
+  var elPos=document.getElementById('sl-pos'), elPosLine=document.getElementById('sl-posline');
+  var elTotal=document.getElementById('sl-total'), elMsg=document.getElementById('sl-msg');
+  var elTitle=document.getElementById('sl-title'), elNote=document.getElementById('sl-note');
+  var elBrand=document.getElementById('sl-brand'), elSpin=document.getElementById('sl-spin');
+  var elArc=document.getElementById('sl-arc');
+  var done=false, delay=1500, fails=0, lastPos=0;
+  function setArc(k){ try{ elArc.setAttribute('stroke-dashoffset', String(Math.round(326.7*(1-k)))); }catch(e){} }
+  function targetTo(){ try{ var m=/[?&]to=([^&]*)/.exec(location.search); if(m){ var t=decodeURIComponent(m[1]); if(t.charAt(0)==='/'&&t.charAt(1)!=='/'&&t.indexOf('\\\\')<0) return t; } }catch(e){} return '/'; }
+  function ready(){ if(done)return; done=true; elMsg.textContent=T.pass; elPos.textContent='✓'; setArc(1);
+    elPosLine.textContent='вы допущены'; elTotal.textContent='—'; elSpin.style.display='none';
+    try{ document.cookie='nrgpass=1; Path=/; Max-Age=604800; SameSite=Lax'; }catch(e){}
+    setTimeout(function(){ location.replace(targetTo()); }, 900); }
   function render(j){
-    if(!j)return;
-    var p=j.page||{};
-    if(p.title){elTitle.textContent=p.title;document.title=p.title;}
-    if(p.message)elMsg.textContent=p.message;
-    if(p.note)elNote.textContent=p.note;
-    if(p.brand)elBrand.textContent=p.brand;
-    if(p.color){document.documentElement.style.setProperty('--accent',p.color);}
-    if(j.state==='pass'){ready();return;}
-    if(j.state==='full'){elMsg.textContent=T.full;elPos.textContent='\\u2014';elDots.style.display='none';
-      setTimeout(poll,30000);return;}
+    if(!j) return;
+    var p=(j&&j.page)||{};
+    if(p.title){ elTitle.textContent=p.title; document.title=p.title; }
+    if(p.message) elMsg.textContent=p.message;
+    if(p.note) elNote.textContent=p.note;
+    if(p.brand) elBrand.textContent=p.brand;
+    if(p.color){ document.documentElement.style.setProperty('--accent', p.color); }
+    if(j.state==='pass'){ ready(); return; }
+    if(j.state==='full'){ elMsg.textContent=T.full; elPos.textContent='—'; elPosLine.textContent='попробуйте позже';
+      elSpin.style.display='none'; setTimeout(poll,30000); return; }
     elMsg.textContent=T.wait;
-    elPos.textContent=(typeof j.pos==='number'&&j.pos>0)?j.pos:'…';
-    elTotal.textContent=(typeof j.total==='number'&&j.total>0)?j.total:'—';
+    var pos=(typeof j.pos==='number'&&j.pos>0)?j.pos:null;
+    var tot=(typeof j.total==='number'&&j.total>0)?j.total:null;
+    elPos.textContent=pos?pos:'…';
+    elPosLine.textContent=pos?('место '+pos+(tot?(' из '+tot):'')):'определяем…';
+    elTotal.textContent=tot?tot:'—';
+    if(pos){ lastPos=pos; }
+    setArc(pos&&tot?Math.max(0.12, 1-(pos/Math.max(tot,1))*0.85):(lastPos?0.35:0.25));
   }
-  function schedule(ms){setTimeout(poll,ms);}
+  function schedule(ms){ setTimeout(poll, ms); }
   function poll(){
-    if(done)return;
-    if(document.hidden){schedule(8000);return;}
-    fetch('/.safeline/slext/status',{cache:'no-store'}).then(function(r){if(r.status!==200)throw 0;return r.json();})
-      .then(function(j){fails=0;render(j);if(!done)schedule(delay);})
-      .catch(function(){fails++;elMsg.textContent=T.conn;schedule(Math.min(15000,2000+fails*2000));});
+    if(done) return;
+    if(document.hidden){ schedule(8000); return; }
+    fetch('/.safeline/slext/status',{cache:'no-store'})
+      .then(function(r){ if(r.status!==200) throw 0; return r.json(); })
+      .then(function(j){ fails=0; render(j); if(!done) schedule(delay); })
+      .catch(function(){ fails++; elMsg.textContent=T.conn; schedule(Math.min(15000, 2000+fails*2000)); });
   }
-  poll();
-  document.addEventListener('visibilitychange',function(){if(!document.hidden&&!done)schedule(400);});
+  if(window.__slPreview){ render(window.__slPreview); }
+  else { poll(); }
+  document.addEventListener('visibilitychange', function(){ if(!document.hidden&&!done&&!window.__slPreview) schedule(400); });
 })();
 </script>
 </body>
@@ -2053,8 +2093,13 @@ p{color:#93a4bd;line-height:1.65;margin:0 0 16px;font-size:15px}
 ''')
 
 
-def queue_page_html():
-    return QUEUE_TEMPLATE.safe_substitute()
+def queue_page_html(preview=None):
+    html = QUEUE_TEMPLATE.safe_substitute()
+    if preview:
+        data = json.dumps(preview, ensure_ascii=False).replace('</', '<\\/')
+        html = html.replace('<script>',
+                            '<script>window.__slPreview=%s;</script><script>' % data, 1)
+    return html
 
 
 def queue_write_page():
@@ -2079,6 +2124,95 @@ def queue_stats(host):
 def queue_reset_state(host):
     queue_state(host).update({'admitted': {}, 'waiting': [], 'served': 0, 'peak_waiting': 0,
                               'started': int(time.time())})
+
+
+def queue_try_admit(host, cfg, token):
+    """Мгновенный допуск: (ok, new_token). Токен не создаём, если не допущен."""
+    now = time.time()
+    st = queue_state(host)
+    for t in [t for t, ts in st['admitted'].items() if now - ts > max(60, int(cfg['ttl']))]:
+        st['admitted'].pop(t, None)
+    if token and token in st['admitted']:
+        st['admitted'][token] = now
+        return True, None
+    if len(st['admitted']) < max(1, int(cfg['max_concurrent'])):
+        new = None
+        if not token:
+            token = secrets.token_hex(16)
+            new = token
+        st['waiting'] = [(t, ts) for t, ts in st['waiting'] if t != token]
+        if token not in st['admitted']:
+            st['served'] += 1
+        st['admitted'][token] = now
+        return True, new
+    return False, None
+
+
+def queue_cookie_token(self):
+    try:
+        for part in (self.headers.get('Cookie') or '').split(';'):
+            part = part.strip()
+            if part.startswith(QUEUE_COOKIE + '='):
+                return part.split('=', 1)[1][:64]
+    except Exception:
+        pass
+    return ''
+
+
+def handle_queue_admit(self):
+    """GET /api/queue/admit — резервный вход допуска (200 = пустить, 403 = очередь)."""
+    host = ''
+    try:
+        host = str(self.headers.get('X-Slext-Host') or '').strip()[:200]
+    except Exception:
+        host = ''
+    site = site_by_host(host) if host else None
+    if not site:
+        return self._json(200, {'ok': True})
+    cfg = queue_cfg(host)
+    if not cfg.get('enabled'):
+        return self._json(200, {'ok': True})
+    ok, new_token = queue_try_admit(host, cfg, queue_cookie_token(self))
+    if ok:
+        extra = []
+        if new_token:
+            extra.append(('X-Slext-Set-Cookie',
+                          '%s=%s; Path=/; Max-Age=86400; SameSite=Lax' % (QUEUE_COOKIE, new_token)))
+        return self._json(200, {'ok': True}, extra=extra)
+    return self._json(403, {'ok': False, 'queue': True})
+
+
+def handle_queue_go(self):
+    """GET /api/queue/go?to=... — rewrite-гейт: мгновенный допуск без промежуточной страницы."""
+    host = ''
+    try:
+        host = str(self.headers.get('X-Slext-Host') or '').strip()[:200]
+        if not host:
+            host = str(self.headers.get('Host') or '').split(':')[0].strip()[:200]
+    except Exception:
+        host = ''
+    try:
+        qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        to = str((qs.get('to') or [''])[0])[:300]
+    except Exception:
+        to = ''
+    if not to or not to.startswith('/') or to.startswith('//') or '\\' in to:
+        to = '/'
+    site = site_by_host(host) if host else None
+    if not site:
+        return self._redirect(to)
+    cfg = queue_cfg(host)
+    if not cfg.get('enabled'):
+        return self._redirect(to)
+    ok, new_token = queue_try_admit(host, cfg, queue_cookie_token(self))
+    if not ok:
+        return self._redirect('/@slext-queue?to=' + urllib.parse.quote(to, safe=''))
+    extra = []
+    if new_token:
+        extra.append(('Set-Cookie',
+                      '%s=%s; Path=/; Max-Age=86400; SameSite=Lax' % (QUEUE_COOKIE, new_token)))
+    sep = '&' if '?' in to else '?'
+    return self._redirect(to + sep + 'slgo=1', extra=extra)
 
 
 def handle_queue_status(self):
@@ -2132,28 +2266,40 @@ def queue_cfg(host):
 
 
 def queue_sync_map():
-    """Пересобрать map-файл гейта по всем сайтам из state."""
+    """Пересобрать map-файл гейта (rewrite-фаза, t1k-совместимо)."""
     with LOCK:
         sites = ((STATE.get('waiting') or {}).get('sites') or {})
         on = [h for h, c in sites.items() if (c or {}).get('queue', {}).get('enabled')]
     lines = ['# slext-queue map (managed by SLExt API)',
-             'map $host $slext_queue_on {',
+             'map $host $slext_q_on {',
              '    default 0;']
     for h in sorted(on):
         if re.match(r'^[A-Za-z0-9_.\-]{3,120}$', h):
             lines.append('    %s 1;' % h)
     lines += ['}',
-              'map $cookie_%s $slext_queue_np {' % QUEUE_COOKIE,
-              '    default 1;',
-              '    "~." 0;',
+              'map $cookie_%s $slext_q_c {' % QUEUE_COOKIE,
+              '    default 0;',
+              '    "" 1;',
               '}',
-              'map "$slext_queue_on$slext_queue_np" $slext_queue_on0 {',
-              '    "11" 1;',
+              'map $http_accept $slext_q_h {',
+              '    default 0;',
+              '    "~*text/html" 1;',
+              '}',
+              'map "$slext_q_on$slext_q_c$slext_q_h" $slext_q_pre {',
+              '    "111" 1;',
               '    default 0;',
               '}',
-              'map "$slext_queue_on0$request_uri" $slext_queue_gate {',
+              'map "$slext_q_pre$request_uri" $slext_q_pre2 {',
               '    "~^1/(@slext-queue|\\.safeline/)" 0;',
               '    "~^1" 1;',
+              '    default 0;',
+              '}',
+              'map $arg_slgo $slext_q_l {',
+              '    default 0;',
+              '    "1" 1;',
+              '}',
+              'map "$slext_q_pre2$slext_q_l" $slext_queue_go {',
+              '    "10" 1;',
               '    default 0;',
               '}']
     txt = '\n'.join(lines) + '\n'
@@ -2203,6 +2349,26 @@ def queue_status(host, token):
     return token, 'wait', pos, len(st['waiting'])
 
 
+def queue_patch_reload():
+    """Перезаписать конфиги сайтов (гейт очереди живёт в них) и перезагрузить nginx."""
+    try:
+        sdir = os.path.join(NGINX_ROOT, 'sites-enabled')
+        files = []
+        for fn in sorted(os.listdir(sdir)):
+            if fn.startswith('IF_') and not fn.endswith(('.orig', '.bak', '.slext-orig')):
+                files.append(os.path.join(sdir, fn))
+        if not files:
+            return False
+        run(['python3', PAGE_PATCH] + files, timeout=60)
+        rc, _out, _err = run(['docker', 'exec', 'safeline-tengine', 'nginx', '-t'], timeout=60)
+        if rc != 0:
+            return False
+        run(['docker', 'exec', 'safeline-tengine', 'nginx', '-s', 'reload'], timeout=60)
+        return True
+    except Exception:
+        return False
+
+
 def queue_apply(host, enabled=None, max_concurrent=None, ttl=None, max_waiting=None):
     """Настройки нашего зала сайта + синхронизация nginx-гейта."""
     with LOCK:
@@ -2223,6 +2389,7 @@ def queue_apply(host, enabled=None, max_concurrent=None, ttl=None, max_waiting=N
         if max_waiting is not None:
             q['max_waiting'] = clamp_int(max_waiting, 1, 100000, 200)
         save_state(STATE)
+    queue_patch_reload()
     queue_sync_map()
     return queue_cfg(host)
 
@@ -2421,6 +2588,10 @@ def _wr_tick(first=False):
 
 
 def wr_startup():
+    try:
+        wr_migrate_page_defaults()
+    except Exception:
+        pass
     try:
         page_apply()
     except Exception:
@@ -3500,6 +3671,15 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _redirect(self, location, extra=None):
+        self.send_response(302)
+        self.send_header('Location', location)
+        self.send_header('Cache-Control', 'no-store')
+        for k, v in (extra or []):
+            self.send_header(k, v)
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
     def _text(self, code, text, ctype='text/plain; charset=utf-8', filename=None):
         data = text.encode('utf-8')
         self.send_response(code)
@@ -3569,6 +3749,10 @@ class H(BaseHTTPRequestHandler):
             with LOCK:
                 sk = json.loads(json.dumps(STATE.get('skip') or {'enabled': True}))
             return self._json(200, {'ok': True, 'skip': sk})
+        if u.path == '/api/queue/admit':
+            return handle_queue_admit(self)
+        if u.path == '/api/queue/go':
+            return handle_queue_go(self)
         if u.path == '/api/queue/status':
             return handle_queue_status(self)
         if u.path == '/api/waiting/status':
@@ -4168,9 +4352,8 @@ class H(BaseHTTPRequestHandler):
                         merged[k] = str(page[k])[:600]
                 if 'show_stats' in page:
                     merged['show_stats'] = bool(page['show_stats'])
-                with LOCK:
-                    panel_base = str((STATE.get('waiting') or {}).get('panel_base') or '')
-                return self._json(200, {'ok': True, 'html': waiting_page_html(host, {'page': merged}, panel_base)})
+                return self._json(200, {'ok': True, 'html': queue_page_html(
+                    {'state': 'wait', 'pos': 42, 'total': 187, 'page': merged})})
             with LOCK:
                 sites = STATE.setdefault('waiting', {}).setdefault('sites', {})
                 cfg = sites.setdefault(host, {})
