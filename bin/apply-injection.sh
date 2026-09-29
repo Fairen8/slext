@@ -19,7 +19,7 @@ if ! docker exec safeline-mgt grep -q slext-injected /app/static/index.html; the
   echo "slext-injection-applied"
 fi
 EXTV="$(cat /opt/slext/conf/extver 2>/dev/null || echo 50)"
-docker exec safeline-mgt sed -i -E 's|href="/ext/ext\.css(\?v=[0-9]+)?"|href="/ext/ext.css?v='"$EXTV"'"|; s|src="/ext/ext\.js(\?v=[0-9]+)?" defer|src="/ext/ext.js?v='"$EXTV"'" defer|' /app/static/index.html || true
+docker exec safeline-mgt sed -i -E 's|href="/ext/ext\.css(\?v=[0-9]*)?|href="/ext/ext.css?v='"$EXTV"'|; s|src="/ext/ext\.js(\?v=[0-9]*)?|src="/ext/ext.js?v='"$EXTV"'|' /app/static/index.html || true
 
 GW=$(docker network inspect safeline-ce -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null)
 [ -z "$GW" ] && GW=192.168.0.1
