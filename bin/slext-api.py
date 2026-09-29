@@ -67,74 +67,171 @@ ACTION_NAMES = {1: 'Blocked', 2: 'Inspected', 3: 'Audited'}
 
 PAGE_DEFS = {
     '403': {'file': 'forbidden.html', 'loc': '/.safeline/forbidden_page',
-            'title': 'Запрос заблокирован', 'message': 'Запрос заблокирован системой защиты сайта.',
-            'icon': 'shield', 'color': '#FF6666'},
+            'title': 'Запрос заблокирован', 'message': 'Запрос заблокирован системой защиты сайта.'},
     '404': {'file': 'not_found.html', 'loc': '/.safeline/not_found_page',
-            'title': 'Страница не найдена', 'message': 'Такой страницы здесь нет.',
-            'icon': 'search', 'color': '#0067B8'},
+            'title': 'Страница не найдена', 'message': 'Такой страницы здесь нет.'},
     '429': {'file': 'acl.html', 'loc': '/.safeline/acl_page',
-            'title': 'Слишком много запросов', 'message': 'Превышен лимит запросов. Попробуйте чуть позже.',
-            'icon': 'gauge', 'color': '#FF6666'},
+            'title': 'Слишком много запросов', 'message': 'Превышен лимит запросов. Попробуйте чуть позже.'},
     '465': {'file': 'waiting_room.html', 'loc': '/.safeline/waiting_room_page',
-            'title': 'Вы в очереди', 'message': 'Сейчас большой наплыв посетителей. Страница откроется автоматически.',
-            'icon': 'hourglass', 'color': '#0067B8'},
+            'title': 'Вы в очереди', 'message': 'Сейчас большой наплыв посетителей. Страница откроется автоматически.'},
     '466': {'file': 'offline.html', 'loc': '/.safeline/offline_page',
-            'title': 'Сайт на обслуживании', 'message': 'Идут технические работы. Скоро вернёмся.',
-            'icon': 'wrench', 'color': '#0067B8'},
+            'title': 'Сайт на обслуживании', 'message': 'Идут технические работы. Скоро вернёмся.'},
     '502': {'file': 'bad_gateway.html', 'loc': '/.safeline/bad_gateway_page',
-            'title': 'Сервис недоступен', 'message': 'Сервер не отвечает. Попробуйте обновить страницу.',
-            'icon': 'plug', 'color': '#FF6666'},
+            'title': 'Сервис недоступен', 'message': 'Сервер не отвечает. Попробуйте обновить страницу.'},
     '504': {'file': 'gateway_timeout.html', 'loc': '/.safeline/gateway_timeout_page',
-            'title': 'Превышено время ожидания', 'message': 'Сервер слишком долго отвечает. Попробуйте ещё раз.',
-            'icon': 'clock', 'color': '#FF6666'},
+            'title': 'Превышено время ожидания', 'message': 'Сервер слишком долго отвечает. Попробуйте ещё раз.'},
 }
 
-PAGE_ICONS = {
-    'shield': '<path d="M12 3l7 3v6c0 4.5-2.9 7.6-7 9-4.1-1.4-7-4.5-7-9V6l7-3z"/><path d="M9.4 12l1.9 1.9L15 10.2"/>',
-    'search': '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-3.8-3.8"/>',
-    'gauge': '<path d="M4 14a8 8 0 0 1 16 0"/><path d="M12 14l3.6-3.6"/><circle cx="12" cy="14" r="1.4"/>',
-    'hourglass': '<path d="M7 3h10"/><path d="M7 21h10"/><path d="M8 3c0 3.6 7.5 4.9 7.5 9S8 17.4 8 21"/><path d="M16 3c0 3.6-7.5 4.9-7.5 9S16 17.4 16 21"/>',
-    'wrench': '<path d="M15.5 5.5a3.5 3.5 0 0 0 4.4 4.4L11.6 18.2a2 2 0 0 1-2.8-2.8L17.1 7.1"/><path d="M15.5 5.5L14 4a3.1 3.1 0 1 1 3.1 3.1L15.5 5.5z"/>',
-    'plug': '<path d="M9 3v5"/><path d="M15 3v5"/><path d="M7 8h10v3a5 5 0 0 1-5 5 5 5 0 0 1-5-5V8z"/><path d="M12 16v5"/>',
-    'clock': '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+PAGE_EYEBROWS = {
+    '403': 'ACCESS DENIED',
+    '404': 'PAGE NOT FOUND',
+    '429': 'RATE LIMIT',
+    '466': 'TECHNICAL WORKS',
+    '502': 'BAD GATEWAY',
+    '504': 'GATEWAY TIMEOUT',
 }
+PAGE_TICKERS = {
+    '403': 'ДОСТУП ЗАКРЫТ ✦ ЗАЩИТА СРАБОТАЛА',
+    '404': 'СТРАНИЦА НЕ НАЙДЕНА ✦ ПРОВЕРЬТЕ АДРЕС',
+    '429': 'СЛИШКОМ МНОГО ЗАПРОСОВ ✦ СБАВЬТЕ ТЕМП',
+    '466': 'ТЕХНИЧЕСКИЕ РАБОТЫ ✦ СКОРО ВЕРНЁМСЯ',
+    '502': 'СЕРВИС НЕДОСТУПЕН ✦ МЫ УЖЕ ЧИНИМ',
+    '504': 'СЕРВЕР ЗАДУМАЛСЯ ✦ ПОПРОБУЙТЕ ЕЩЁ',
+}
+
+WWW_DIR = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'www'))
+FONTS_DIR = os.path.join(WWW_DIR, 'fonts')
+UNICODE_CYR = ('U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116')
+UNICODE_LAT = ('U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,'
+               'U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,'
+               'U+2212,U+2215,U+FEFF,U+FFFD')
+# (family, style, weight, filename, unicode-range)
+FONT_FACES = [
+    ('Cormorant Garamond', 'normal', '500', 'cormorant-garamond-cyrillic-500.woff2', UNICODE_CYR),
+    ('Cormorant Garamond', 'normal', '500', 'cormorant-garamond-latin-500.woff2', UNICODE_LAT),
+    ('Cormorant Garamond', 'italic', '500', 'cormorant-garamond-cyrillic-500-italic.woff2', UNICODE_CYR),
+    ('Cormorant Garamond', 'italic', '500', 'cormorant-garamond-latin-500-italic.woff2', UNICODE_LAT),
+    ('Manrope', 'normal', '400 700', 'manrope-cyrillic.woff2', UNICODE_CYR),
+    ('Manrope', 'normal', '400 700', 'manrope-latin.woff2', UNICODE_LAT),
+]
+FONT_CACHE = {'css': None}
+
+
+def font_css():
+    """@font-face с base64-woff2; '' если ассеты недоступны (fallback-стеки в шаблонах)."""
+    if FONT_CACHE['css'] is None:
+        rules = []
+        for family, style, weight, name, urange in FONT_FACES:
+            try:
+                with open(os.path.join(FONTS_DIR, name), 'rb') as f:
+                    b64 = base64.b64encode(f.read()).decode('ascii')
+            except OSError:
+                continue
+            rules.append("@font-face{font-family:'%s';font-style:%s;font-weight:%s;"
+                         "font-display:swap;src:url(data:font/woff2;base64,%s) format('woff2');"
+                         'unicode-range:%s}' % (family, style, weight, b64, urange))
+        FONT_CACHE['css'] = '\n'.join(rules)
+    return FONT_CACHE['css']
+
 
 PAGE_TEMPLATE = Template('''<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#11100f">
 <meta name="robots" content="noindex, nofollow">
 $refresh
 <title>$title</title>
 <!-- slext-error-page -->
 <style>
-:root{--primary-color:$accent;--light-primary-color:#9AC3E3;--font-color:#FFFFFF;--light-font-color:#B3D1E9;--warning-color:#FF6666;--warning-font-color:#FFFFFF;--warning-light-font-color:#FFD1D1}
+$fonts
+/* токены NRGIndex/public/styles.css */
+:root{--ink:#11100f;--ink-soft:#1a1715;--paper:#f2ede4;--line:rgba(242,237,228,.17);
+--muted:rgba(242,237,228,.6);--pink:#ff4f79;--orange:#ff7448;--acid:#efee87;
+--serif:'Cormorant Garamond',Georgia,'Times New Roman',serif;
+--sans:'Manrope',Arial,'Helvetica Neue',sans-serif;--ease:cubic-bezier(.22,1,.36,1)}
 *{box-sizing:border-box}
-html,body{height:100%;margin:0}
-body{font-family:PingFang SC,Helvetica Neue,Helvetica,Arial,sans-serif;background-color:var(--primary-color)}
-#slg-bg{background-color:var(--primary-color);position:fixed;inset:0;z-index:100}
-#slg-box{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:90%;max-width:40rem;text-align:center;z-index:300}
-#slg-warning{display:block;margin:0 auto 18px}
-#slg-text{font-size:1.5rem;line-height:2.2rem;color:var(--font-color)}
-#slg-desc{color:var(--light-font-color);font-size:.8rem;line-height:2rem}
-.btn{display:inline-block;margin-top:12px;padding:10px 22px;border-radius:999px;background:var(--font-color);color:var(--primary-color);font-size:14px;text-decoration:none}
-#slg-copyright{position:fixed;left:0;right:0;bottom:0;padding:0 0 1.5rem;text-align:center;color:var(--light-font-color);font-size:.8rem;line-height:2rem;z-index:300}
-#slg-logo svg{display:block;margin:0 auto}
-#slg-name{color:var(--font-color)}
+html,body{margin:0}
+body{color:var(--paper);background:var(--ink);font-family:var(--sans);overflow-x:clip}
+::selection{background:var(--pink);color:var(--paper)}
+a{color:inherit}
+/* шум: тот же data-URI SVG, что .page-noise в NRGIndex/public/styles.css */
+.noise{position:fixed;inset:0;z-index:50;pointer-events:none;opacity:.12;background-repeat:repeat;background-size:256px 256px;
+background-image:url("data:image/svg+xml,%3Csvg width='256' height='256' viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.72' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.8'/%3E%3C/svg%3E")}
+/* свечения: pink справа сверху, orange слева снизу */
+.glow{position:fixed;z-index:0;border-radius:50%;filter:blur(90px);opacity:.28;pointer-events:none}
+.glow--pink{width:32rem;height:32rem;right:5%;top:15%;background:var(--pink)}
+.glow--orange{width:21rem;height:21rem;left:-8%;bottom:-4%;background:var(--orange)}
+.page{position:relative;z-index:1;display:flex;flex-direction:column;min-height:100vh;min-height:100svh}
+.top{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1.35rem 2rem;border-bottom:1px solid var(--line)}
+.brand{margin:0;font-size:1.05rem;font-weight:700;letter-spacing:-.06em;line-height:1}
+.brand__caption{display:block;margin-top:.3rem;color:var(--muted);font-size:.48rem;font-weight:700;letter-spacing:.2em;text-transform:uppercase}
+.slash{color:var(--orange)}
+.top__meta{display:flex;align-items:center;gap:.65rem;margin:0;color:var(--muted);font-size:.66rem;letter-spacing:.11em;text-transform:uppercase;white-space:nowrap}
+.live{width:.45rem;height:.45rem;border-radius:50%;background:var(--orange);box-shadow:0 0 0 .3rem rgba(255,116,72,.12);animation:pulse 2s infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 .55rem rgba(255,116,72,0)}}
+.stage{position:relative;isolation:isolate;flex:1;display:grid;place-items:center;padding:5.5rem 2rem}
+.stage::before{content:"";position:absolute;z-index:-1;inset:0;pointer-events:none;
+background:linear-gradient(90deg,transparent calc(58% - .5px),var(--line) 58%,transparent calc(58% + .5px)),linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px);
+background-size:100% 100%,100% 7rem}
+.card{position:relative;width:min(100%,46rem);padding:3.4rem 3rem 3rem;border:1px solid var(--line);border-radius:1.1rem;background:#151311;box-shadow:0 3rem 8rem rgba(0,0,0,.32)}
+.stamp{position:absolute;top:-2.2rem;right:-1.8rem;display:grid;place-items:center;width:5rem;aspect-ratio:1;border-radius:50%;color:var(--ink);background:var(--acid);font:500 italic 2.35rem/1 var(--serif);letter-spacing:-.02em;transform:rotate(11deg);box-shadow:0 .8rem 2rem rgba(0,0,0,.25)}
+.stamp::after{content:"";position:absolute;inset:-.45rem;border:1px dashed rgba(17,16,15,.45);border-radius:50%;opacity:.5;animation:rotate 24s linear infinite reverse}
+@keyframes rotate{to{transform:rotate(360deg)}}
+.eyebrow{margin:0 0 1rem;color:var(--orange);font-size:.64rem;font-weight:700;letter-spacing:.23em;text-transform:uppercase}
+h1{margin:0;font-family:var(--serif);font-style:italic;font-weight:500;font-size:clamp(3rem,7vw,5.5rem);line-height:.85;letter-spacing:-.055em;overflow-wrap:anywhere}
+.msg{max-width:30rem;margin:1.25rem 0 0;color:var(--muted);font-size:.84rem;line-height:1.8}
+.btn{display:inline-block;margin-top:1.6rem;padding:.65rem 1rem;border:1px solid var(--paper);border-radius:.6rem;background:var(--paper);color:var(--ink);font:700 .72rem var(--sans);letter-spacing:.04em;text-decoration:none;transition:transform .3s var(--ease),background .3s var(--ease)}
+.btn:hover{transform:translateY(-1px)}
+.btn:focus-visible{outline:2px solid var(--acid);outline-offset:3px}
+.auto{margin:1rem 0 0;color:var(--muted);font-size:.58rem;font-weight:700;letter-spacing:.16em;text-transform:uppercase}
+.marquee{position:relative;z-index:6;overflow:hidden;padding:.55rem 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--paper);color:var(--ink);transform:rotate(-1.2deg) scale(1.02)}
+.track{display:flex;align-items:center;gap:2.2rem;width:max-content;padding:.85rem 2.2rem .85rem 0;font-family:var(--serif);font-size:1.4rem;font-style:italic;white-space:nowrap;animation:marquee 22s linear infinite;will-change:transform}
+.track i{color:var(--pink);font-size:.9rem;font-style:normal}
+@keyframes marquee{to{transform:translate3d(-50%,0,0)}}
+.foot{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1.1rem 2rem;border-top:1px solid var(--line);background:#0b0a09;color:var(--muted);font-size:.62rem;letter-spacing:.08em}
+.foot__mark{color:var(--paper);font-weight:700;letter-spacing:-.02em}
+@media (max-width:720px){
+.top{padding:1rem}
+.brand{font-size:.95rem}
+.stage{padding:4.5rem 1rem}
+.card{padding:3.4rem 1.2rem 2rem}
+h1{font-size:clamp(2.4rem,12vw,3.4rem)}
+.msg{font-size:.8rem}
+.stamp{position:static;margin:0 0 1.4rem;width:4rem;font-size:1.85rem}
+.foot{padding:.9rem 1rem}
+.track{font-size:1.1rem}
+}
+@media (prefers-reduced-motion:reduce){
+*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+}
 </style>
 </head>
 <body>
-<div id="slg-bg"></div>
-<div id="slg-box">
-  <svg id="slg-warning" width="68" height="59"><g fill="var(--font-color)"><g><path d="M29.455 2.852c2.062-3.527 6.151-4.07 8.48 0 1.538 2.527 7.818 13.159 14.15 23.904l.827 1.401.412.7.823 1.396A32540 32540 0 0 1 67.03 52.144l.02.038c.26.507 2.626 5.356-1.267 6.818H3.356s-6.846-1.44-.983-9.723c2.345-3.963 8.37-14.306 14.423-24.7l1.008-1.73c4.476-7.689 8.855-15.211 11.651-19.995m4.526 40.47c-2.157 0-3.905 1.74-3.905 3.885s1.748 3.884 3.905 3.884 3.905-1.739 3.905-3.884-1.748-3.884-3.905-3.884m.042-23.955c-2.18 0-3.947 1.758-3.947 3.926V35.69c0 2.168 1.767 3.926 3.947 3.926s3.947-1.757 3.947-3.926V23.293c0-2.168-1.767-3.926-3.947-3.926"/></g></g></svg>
-  <div id="slg-text">$title</div>
-  <div id="slg-desc">$message</div>
-  $button
-</div>
-<div id="slg-copyright">
-  <div id="slg-logo"><svg width="32" height="35"><g fill="var(--font-color)"><path d="M15.006.33c.602-.44 1.4-.44 2.002 0 1.985 1.444 6.911 4.473 12.901 4.631.78.035 1.418.599 1.577 1.356.922 4.754 2.605 20.848-15.452 28.35C-2.077 27.183-.43 11.07.528 6.317c.142-.757.815-1.32 1.577-1.356 5.99-.158 10.863-3.187 12.9-4.63m1.037 4.54c-.28 1.647-2.15 1.938-2.15 1.938-1.9.309-2.819-1.12-2.819-1.12.82 2.255 2.198 2.391 2.446 2.397h2.423c-.7 1.802-3.48 2.133-3.48 2.133-3.159.39-4.689-1.423-4.689-1.423q.17.357.358.66l-.008-.005a11 11 0 0 0-3.106 7.671c0 6.09 4.937 11.026 11.026 11.026 6.09 0 11.027-4.936 11.027-11.026a11 11 0 0 0-3.11-7.674q.185-.3.353-.652s-1.53 1.816-4.69 1.423c0 0-2.776-.33-3.478-2.132h2.42c.245-.006 1.627-.14 2.448-2.397 0 0-.92 1.428-2.82 1.12-.142-.025-1.882-.356-2.15-1.94"/><polygon points="15.98353 17.9879553 9.8818726 21.4510476 15.3313444 24.6578974 17.2903808 23.6211992 13.5799337 21.4510476 15.98353 20.0985396 20.3159976 22.5564681 20.3159976 23.3648458 22.2042418 24.5010295 22.2042418 21.4510476" transform="rotate(-180 16.043 21.323)"/><polygon points="15.9835296 10.9942305 9.8818722 14.4573228 15.331344 17.6641726 17.2903804 16.6274743 13.5799333 14.4573228 15.9835296 13.1048148 20.3159972 15.5627433 20.3159972 16.371121 22.2042414 17.5073047 22.2042414 14.4573228"/></g></svg></div>
-  <div id="slg-copyright-text"><span id="slg-prefix">Security Detection Powered By</span> <span id="slg-name">$brand</span></div>
+<div class="noise" aria-hidden="true"></div>
+<div class="glow glow--pink" aria-hidden="true"></div>
+<div class="glow glow--orange" aria-hidden="true"></div>
+<div class="page">
+  <header class="top">
+    <p class="brand">$brandmark<span class="brand__caption">status page</span></p>
+    <p class="top__meta"><span class="live"></span> HTTP $code</p>
+  </header>
+  <main class="stage">
+    <section class="card">
+      <div class="stamp" aria-hidden="true"><span>$code</span></div>
+      <p class="eyebrow">$eyebrow</p>
+      <h1>$title</h1>
+      <p class="msg">$message</p>
+      $button
+      $autonote
+    </section>
+  </main>
+  <div class="marquee" aria-hidden="true"><div class="track">$ticker</div></div>
+  <footer class="foot">
+    <span class="foot__mark">$brandmark</span>
+    <span>HTTP $code</span>
+  </footer>
 </div>
 </body>
 </html>
@@ -1276,17 +1373,18 @@ def geo_apply():
     return ok, {'missing': missing, 'cidrs': len(lines), 'error': STATE['geo']['last_error']}
 
 
+def brand_mark(brand):
+    """Бренд-марка: каждый сегмент вокруг '/' экранируется отдельно."""
+    import html as _html
+    return '<span class="slash">/</span>'.join(_html.escape(part) for part in brand.split('/'))
+
+
 def page_html(code, cfg, page):
     import html as _html
     d = PAGE_DEFS.get(code, PAGE_DEFS['403'])
     title = str(cfg.get('title') or d['title'])[:120]
     message = str(cfg.get('message') or d['message'])[:600]
     brand = str(page.get('brand') or 'SafeLine WAF')[:60]
-    color = str(page.get('color') or '')
-    if not color or color == '#0fc6c2':
-        color = str(d.get('color') or '')
-    if not re.match(r'^#[0-9a-fA-F]{3,8}$', color):
-        color = '#0067B8'
     button = ''
     refresh = ''
     if code in ('429', '465', '466', '502', '504'):
@@ -1295,9 +1393,13 @@ def page_html(code, cfg, page):
         refresh = '<meta http-equiv="refresh" content="60">'
     elif code == '404':
         button = '<a class="btn" href="/">На главную</a>'
+    autonote = '<p class="auto">Страница обновится автоматически</p>' if refresh else ''
     return PAGE_TEMPLATE.safe_substitute(
-        title=_html.escape(title), message=_html.escape(message),
-        brand=_html.escape(brand), accent=color, button=button, refresh=refresh)
+        refresh=refresh, title=_html.escape(title), message=_html.escape(message),
+        brandmark=brand_mark(brand), code=_html.escape(str(code)),
+        eyebrow=PAGE_EYEBROWS.get(code, 'ERROR'),
+        ticker=(PAGE_TICKERS.get(code, 'ERROR') + ' <i>✦</i> ') * 4,
+        button=button, autonote=autonote, fonts=font_css())
 
 
 def page_apply():
@@ -1817,53 +1919,116 @@ WAITING_TEMPLATE = Template('''<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#11100f">
 <meta name="robots" content="noindex, nofollow">
 <title>$title</title>
 <!-- slext-waiting-page -->
 <style>
-:root{--primary-color:$accent;--light-primary-color:#9AC3E3;--font-color:#FFFFFF;--light-font-color:#B3D1E9;--success-color:#00B87C;--warning-color:#FF6666;--warning-font-color:#FFFFFF;--warning-light-font-color:#FFD1D1}
+$fonts
+/* токены NRGIndex/public/styles.css */
+:root{--ink:#11100f;--ink-soft:#1a1715;--paper:#f2ede4;--line:rgba(242,237,228,.17);
+--muted:rgba(242,237,228,.6);--pink:#ff4f79;--orange:#ff7448;--acid:#efee87;
+--serif:'Cormorant Garamond',Georgia,'Times New Roman',serif;
+--sans:'Manrope',Arial,'Helvetica Neue',sans-serif;--ease:cubic-bezier(.22,1,.36,1)}
 *{box-sizing:border-box}
-html,body{height:100%;margin:0}
-body{background-color:var(--primary-color);font-family:PingFang SC,Helvetica Neue,Helvetica,Arial,sans-serif}
-#slg-bg{background-color:var(--primary-color);position:fixed;inset:0;z-index:100}
-#slg-box{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:90%;max-width:40rem;text-align:center;z-index:300}
-#sl-dots{position:relative;width:64px;height:64px;margin:0 auto 18px}
-#sl-dots i{position:absolute;top:50%;left:50%;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;background:var(--font-color);opacity:.15;animation:sl-pulse 1.5s linear infinite}
-#sl-dots i:nth-child(1){transform:rotate(0deg) translateY(-26px)}
-#sl-dots i:nth-child(2){transform:rotate(72deg) translateY(-26px);animation-delay:.15s}
-#sl-dots i:nth-child(3){transform:rotate(144deg) translateY(-26px);animation-delay:.3s}
-#sl-dots i:nth-child(4){transform:rotate(216deg) translateY(-26px);animation-delay:.45s}
-#sl-dots i:nth-child(5){transform:rotate(288deg) translateY(-26px);animation-delay:.6s}
-@keyframes sl-pulse{0%,100%{opacity:.12}50%{opacity:1}}
-#slg-text{font-size:1.5rem;line-height:2.2rem;color:var(--font-color)}
-#sl-msg{margin:6px 0 0;color:var(--light-font-color);font-size:.8rem;line-height:2rem}
-#sl-queue{margin-top:10px;color:var(--light-font-color);font-size:1rem;line-height:2rem}
-#sl-pos,#sl-total{font-size:2.2rem;font-weight:700;color:var(--font-color)}
-#sl-note{margin-top:8px;color:var(--light-font-color);font-size:.8rem;line-height:2rem}
-#sl-stats{display:none;grid-auto-flow:column;justify-content:center;gap:16px;margin-top:10px;color:var(--light-font-color);font-size:.75rem;line-height:1.8}
-#sl-stats b{color:var(--font-color);font-weight:700}
-#slg-copyright{position:fixed;left:0;right:0;bottom:0;padding:0 0 1.5rem;text-align:center;color:var(--light-font-color);font-size:.8rem;line-height:2rem;z-index:300}
-#slg-logo svg{display:block;margin:0 auto}
-#slg-name{color:var(--font-color)}
+html,body{margin:0}
+body{color:var(--paper);background:var(--ink);font-family:var(--sans);overflow-x:clip}
+::selection{background:var(--pink);color:var(--paper)}
+a{color:inherit}
+/* шум: тот же data-URI SVG, что .page-noise в NRGIndex/public/styles.css */
+.noise{position:fixed;inset:0;z-index:50;pointer-events:none;opacity:.12;background-repeat:repeat;background-size:256px 256px;
+background-image:url("data:image/svg+xml,%3Csvg width='256' height='256' viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.72' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.8'/%3E%3C/svg%3E")}
+/* свечения: pink справа сверху, orange слева снизу */
+.glow{position:fixed;z-index:0;border-radius:50%;filter:blur(90px);opacity:.28;pointer-events:none}
+.glow--pink{width:32rem;height:32rem;right:5%;top:15%;background:var(--pink)}
+.glow--orange{width:21rem;height:21rem;left:-8%;bottom:-4%;background:var(--orange)}
+.page{position:relative;z-index:1;display:flex;flex-direction:column;min-height:100vh;min-height:100svh}
+.top{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1.35rem 2rem;border-bottom:1px solid var(--line)}
+.brand{margin:0;font-size:1.05rem;font-weight:700;letter-spacing:-.06em;line-height:1}
+.brand__caption{display:block;margin-top:.3rem;color:var(--muted);font-size:.48rem;font-weight:700;letter-spacing:.2em;text-transform:uppercase}
+.slash{color:var(--orange)}
+.top__meta{display:flex;align-items:center;gap:.65rem;margin:0;color:var(--muted);font-size:.66rem;letter-spacing:.11em;text-transform:uppercase;white-space:nowrap}
+.live{width:.45rem;height:.45rem;border-radius:50%;background:var(--orange);box-shadow:0 0 0 .3rem rgba(255,116,72,.12);animation:pulse 2s infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 .55rem rgba(255,116,72,0)}}
+.stage{position:relative;isolation:isolate;flex:1;display:grid;place-items:center;padding:5.5rem 2rem}
+.stage::before{content:"";position:absolute;z-index:-1;inset:0;pointer-events:none;
+background:linear-gradient(90deg,transparent calc(58% - .5px),var(--line) 58%,transparent calc(58% + .5px)),linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px);
+background-size:100% 100%,100% 7rem}
+.card{position:relative;width:min(100%,46rem);padding:3.4rem 3rem 3rem;border:1px solid var(--line);border-radius:1.1rem;background:#151311;box-shadow:0 3rem 8rem rgba(0,0,0,.32)}
+.eyebrow{margin:0 0 1rem;color:var(--orange);font-size:.64rem;font-weight:700;letter-spacing:.23em;text-transform:uppercase}
+h1{margin:0;font-family:var(--serif);font-style:italic;font-weight:500;font-size:clamp(3rem,7vw,5.5rem);line-height:.85;letter-spacing:-.055em;overflow-wrap:anywhere}
+.msg{max-width:30rem;margin:1.25rem 0 0;color:var(--muted);font-size:.84rem;line-height:1.8}
+/* ожидание: пульсирующие точки, номер позиции, статистика */
+#sl-dots{display:flex;align-items:center;gap:.45rem;margin:0 0 1.6rem}
+#sl-dots i{width:.5rem;height:.5rem;border-radius:50%;background:var(--pink);opacity:.15;animation:dots-pulse 1.5s linear infinite}
+#sl-dots i:nth-child(2){background:var(--orange);animation-delay:.15s}
+#sl-dots i:nth-child(3){background:var(--acid);animation-delay:.3s}
+#sl-dots i:nth-child(4){background:var(--pink);animation-delay:.45s}
+#sl-dots i:nth-child(5){background:var(--orange);animation-delay:.6s}
+@keyframes dots-pulse{0%,100%{opacity:.15;transform:scale(.82)}50%{opacity:1;transform:scale(1)}}
+.queue{display:flex;align-items:baseline;gap:.8rem;flex-wrap:wrap;margin:1.5rem 0 0}
+#sl-pos{font-family:var(--serif);font-style:italic;font-weight:500;font-size:clamp(2.6rem,6vw,3.8rem);line-height:1}
+.queue__label{color:var(--muted);font-size:.8rem}
+#sl-total{color:var(--paper);font-weight:700}
+#sl-note{margin:1.1rem 0 0;color:var(--muted);font-size:.58rem;font-weight:700;letter-spacing:.16em;text-transform:uppercase}
+#sl-stats{display:none;grid-template-columns:repeat(3,minmax(0,1fr));gap:1.2rem;margin:1.6rem 0 0;padding-top:1.4rem;border-top:1px solid var(--line)}
+#sl-stats div{display:grid;gap:.3rem;min-width:0}
+#sl-stats b{font-family:var(--serif);font-style:italic;font-weight:500;font-size:1.7rem;line-height:1}
+#sl-stats span{color:var(--muted);font-size:.52rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase}
+.marquee{position:relative;z-index:6;overflow:hidden;padding:.55rem 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--paper);color:var(--ink);transform:rotate(-1.2deg) scale(1.02)}
+.track{display:flex;align-items:center;gap:2.2rem;width:max-content;padding:.85rem 2.2rem .85rem 0;font-family:var(--serif);font-size:1.4rem;font-style:italic;white-space:nowrap;animation:marquee 22s linear infinite;will-change:transform}
+.track i{color:var(--pink);font-size:.9rem;font-style:normal}
+@keyframes marquee{to{transform:translate3d(-50%,0,0)}}
+.foot{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1.1rem 2rem;border-top:1px solid var(--line);background:#0b0a09;color:var(--muted);font-size:.62rem;letter-spacing:.08em}
+.foot__mark{color:var(--paper);font-weight:700;letter-spacing:-.02em}
+@media (max-width:720px){
+.top{padding:1rem}
+.brand{font-size:.95rem}
+.stage{padding:4.5rem 1rem}
+.card{padding:3.4rem 1.2rem 2rem}
+h1{font-size:clamp(2.4rem,12vw,3.4rem)}
+.msg{font-size:.8rem}
+#sl-stats{gap:.7rem}
+#sl-stats b{font-size:1.35rem}
+#sl-stats span{font-size:.46rem;letter-spacing:.1em}
+.foot{padding:.9rem 1rem}
+.track{font-size:1.1rem}
+}
+@media (prefers-reduced-motion:reduce){
+*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+}
 </style>
 </head>
 <body>
-<div id="slg-bg"></div>
-<div id="slg-box">
-  <div id="sl-dots"><i></i><i></i><i></i><i></i><i></i></div>
-  <div id="slg-text">$title</div>
-  <div id="sl-msg">$message</div>
-  <div id="sl-queue">You Are <b id="sl-pos">$firstpos</b> th / <b id="sl-total">—</b> $posttext</div>
-  <div id="sl-note">$note</div>
-  <div id="sl-stats">
-    <span><b id="sl-st-peak">—</b> пик</span>
-    <span><b id="sl-st-queued">—</b> прошло</span>
-    <span><b id="sl-st-avg">—</b> среднее ожидание</span>
-  </div>
-</div>
-<div id="slg-copyright">
-  <div id="slg-logo"><svg width="32" height="35"><g fill="var(--font-color)"><path d="M15.006.33c.602-.44 1.4-.44 2.002 0 1.985 1.444 6.911 4.473 12.901 4.631.78.035 1.418.599 1.577 1.356.922 4.754 2.605 20.848-15.452 28.35C-2.077 27.183-.43 11.07.528 6.317c.142-.757.815-1.32 1.577-1.356 5.99-.158 10.863-3.187 12.9-4.63m1.037 4.54c-.28 1.647-2.15 1.938-2.15 1.938-1.9.309-2.819-1.12-2.819-1.12.82 2.255 2.198 2.391 2.446 2.397h2.423c-.7 1.802-3.48 2.133-3.48 2.133-3.159.39-4.689-1.423-4.689-1.423q.17.357.358.66l-.008-.005a11 11 0 0 0-3.106 7.671c0 6.09 4.937 11.026 11.026 11.026 6.09 0 11.027-4.936 11.027-11.026a11 11 0 0 0-3.11-7.674q.185-.3.353-.652s-1.53 1.816-4.69 1.423c0 0-2.776-.33-3.478-2.132h2.42c.245-.006 1.627-.14 2.448-2.397 0 0-.92 1.428-2.82 1.12-.142-.025-1.882-.356-2.15-1.94"/><polygon points="15.98353 17.9879553 9.8818726 21.4510476 15.3313444 24.6578974 17.2903808 23.6211992 13.5799337 21.4510476 15.98353 20.0985396 20.3159976 22.5564681 20.3159976 23.3648458 22.2042418 24.5010295 22.2042418 21.4510476" transform="rotate(-180 16.043 21.323)"/><polygon points="15.9835296 10.9942305 9.8818722 14.4573228 15.331344 17.6641726 17.2903804 16.6274743 13.5799333 14.4573228 15.9835296 13.1048148 20.3159972 15.5627433 20.3159972 16.371121 22.2042414 17.5073047 22.2042414 14.4573228"/></g></svg></div>
-  <div id="slg-copyright-text"><span id="slg-prefix">Security Detection Powered By</span> <span id="slg-name">$brand</span></div>
+<div class="noise" aria-hidden="true"></div>
+<div class="glow glow--pink" aria-hidden="true"></div>
+<div class="glow glow--orange" aria-hidden="true"></div>
+<div class="page">
+  <header class="top">
+    <p class="brand">$brandmark<span class="brand__caption">waiting room</span></p>
+    <p class="top__meta"><span class="live"></span> HTTP 465</p>
+  </header>
+  <main class="stage">
+    <section class="card">
+      <div class="dots" id="sl-dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+      <p class="eyebrow">WAITING ROOM</p>
+      <h1>$title</h1>
+      <p class="msg" id="sl-msg">$message</p>
+      <p class="queue"><span class="queue__pos" id="sl-pos">$firstpos</span>
+         <span class="queue__label">$posttext <b id="sl-total">—</b></span></p>
+      <p class="note" id="sl-note">$note</p>
+      <div class="stats" id="sl-stats">
+        <div><b id="sl-st-peak">—</b><span>макс. очередь</span></div>
+        <div><b id="sl-st-queued">—</b><span>всего прошло</span></div>
+        <div><b id="sl-st-avg">—</b><span>среднее ожидание</span></div>
+      </div>
+    </section>
+  </main>
+  <div class="marquee" aria-hidden="true"><div class="track">ВЫ В ОЧЕРЕДИ <i>✦</i> НЕ ЗАКРЫВАЙТЕ СТРАНИЦУ <i>✦</i> ВЫ В ОЧЕРЕДИ <i>✦</i> НЕ ЗАКРЫВАЙТЕ СТРАНИЦУ <i>✦</i> </div></div>
+  <footer class="foot">
+    <span class="foot__mark">$brandmark</span>
+    <span>HTTP 465</span>
+  </footer>
 </div>
 <script>
 (function(){
@@ -1973,12 +2138,7 @@ def waiting_page_html(host, cfg, panel_base=''):
     note = _html.escape(str(p.get('note') or '')[:300])
     firstpos = _html.escape(str(p.get('firstpos') or '—')[:8])
     posttext = _html.escape(str(p.get('posttext') or 'People Totally')[:80])
-    brand = _html.escape(str(p.get('brand') or 'SafeLine WAF')[:60])
-    color = str(p.get('color') or '')
-    if not color or color == '#0fc6c2':
-        color = '#0067B8'
-    if not re.match(r'^#[0-9a-fA-F]{3,8}$', color):
-        color = '#0067B8'
+    brand = str(p.get('brand') or 'SafeLine WAF')[:60]
     stats = ''
     if p.get('show_stats', True) and panel_base:
         safe_base = re.sub(r'[^A-Za-z0-9_:/.\-]', '', str(panel_base))[:200].rstrip('/')
@@ -1991,7 +2151,7 @@ def waiting_page_html(host, cfg, panel_base=''):
                      ".catch(function(){});" % safe_base)
     return WAITING_TEMPLATE.safe_substitute(
         title=title, message=message, note=note, firstpos=firstpos, posttext=posttext,
-        brand=brand, accent=color, stats=stats)
+        brandmark=brand_mark(brand), fonts=font_css(), stats=stats)
 
 
 STATIC_RX = re.compile(r'\.(js|css|png|jpe?g|gif|webp|svg|ico|woff2?|ttf|eot|map|json|txt|xml|mp4|webm)(\?|$)', re.I)
@@ -2021,63 +2181,113 @@ QUEUE_TEMPLATE = Template('''<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#11100f">
 <meta name="robots" content="noindex, nofollow">
 <title>Очередь</title>
 <!-- slext-queue-page -->
 <style>
-:root{--accent:#0fc6c2;--bg:#f4f6f9;--card:#ffffff;--text:#0e1626;--muted:#5a6b85;--line:rgba(12,24,48,.08)}
-@media (prefers-color-scheme: dark){:root{--bg:#0c111b;--card:#151c29;--text:#e9eef7;--muted:#93a4bd;--line:rgba(255,255,255,.08)}}
-*{box-sizing:border-box}html,body{height:100%}
-body{margin:0;min-height:100%;display:flex;align-items:center;justify-content:center;padding:24px;
- background:radial-gradient(900px 480px at 85% -10%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 60%),
- radial-gradient(700px 420px at -10% 110%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 60%), var(--bg);
- color:var(--text);font-family:Inter,ui-sans-serif,system-ui,"Segoe UI",Roboto,Arial,sans-serif;-webkit-font-smoothing:antialiased}
-.card{width:100%;max-width:520px;background:var(--card);border:1px solid var(--line);border-radius:24px;
- padding:34px 32px 22px;box-shadow:0 30px 70px -34px rgba(9,20,40,.35)}
-.head{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;letter-spacing:.12em;text-transform:uppercase}
-.dot{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent)}
-h1{font-size:23px;line-height:1.25;margin:16px 0 6px;letter-spacing:-.01em;font-weight:700}
-.msg{color:var(--muted);font-size:14.5px;line-height:1.6;margin:0}
-.ringwrap{display:flex;align-items:center;gap:22px;margin:22px 0 6px}
+$fonts
+/* токены NRGIndex/public/styles.css */
+:root{--ink:#11100f;--ink-soft:#1a1715;--paper:#f2ede4;--line:rgba(242,237,228,.17);
+--muted:rgba(242,237,228,.6);--pink:#ff4f79;--orange:#ff7448;--acid:#efee87;
+--serif:'Cormorant Garamond',Georgia,'Times New Roman',serif;
+--sans:'Manrope',Arial,'Helvetica Neue',sans-serif;--ease:cubic-bezier(.22,1,.36,1)}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{color:var(--paper);background:var(--ink);font-family:var(--sans);overflow-x:clip}
+::selection{background:var(--pink);color:var(--paper)}
+a{color:inherit}
+/* шум: тот же data-URI SVG, что .page-noise в NRGIndex/public/styles.css */
+.noise{position:fixed;inset:0;z-index:50;pointer-events:none;opacity:.12;background-repeat:repeat;background-size:256px 256px;
+background-image:url("data:image/svg+xml,%3Csvg width='256' height='256' viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.72' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.8'/%3E%3C/svg%3E")}
+/* свечения: pink справа сверху, orange слева снизу */
+.glow{position:fixed;z-index:0;border-radius:50%;filter:blur(90px);opacity:.28;pointer-events:none}
+.glow--pink{width:32rem;height:32rem;right:5%;top:15%;background:var(--pink)}
+.glow--orange{width:21rem;height:21rem;left:-8%;bottom:-4%;background:var(--orange)}
+.page{position:relative;z-index:1;display:flex;flex-direction:column;min-height:100vh;min-height:100svh}
+.top{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1.35rem 2rem;border-bottom:1px solid var(--line)}
+.brand{margin:0;font-size:1.05rem;font-weight:700;letter-spacing:-.06em;line-height:1}
+.brand__caption{display:block;margin-top:.3rem;color:var(--muted);font-size:.48rem;font-weight:700;letter-spacing:.2em;text-transform:uppercase}
+.slash{color:var(--orange)}
+.top__meta{display:flex;align-items:center;gap:.65rem;margin:0;color:var(--muted);font-size:.66rem;letter-spacing:.11em;text-transform:uppercase;white-space:nowrap}
+.live{width:.45rem;height:.45rem;border-radius:50%;background:var(--orange);box-shadow:0 0 0 .3rem rgba(255,116,72,.12);animation:pulse 2s infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 .55rem rgba(255,116,72,0)}}
+.stage{position:relative;isolation:isolate;flex:1;display:grid;place-items:center;padding:5.5rem 2rem}
+.stage::before{content:"";position:absolute;z-index:-1;inset:0;pointer-events:none;
+background:linear-gradient(90deg,transparent calc(58% - .5px),var(--line) 58%,transparent calc(58% + .5px)),linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px);
+background-size:100% 100%,100% 7rem}
+.card{position:relative;width:min(100%,46rem);padding:3.4rem 3rem 3rem;border:1px solid var(--line);border-radius:1.1rem;background:#151311;box-shadow:0 3rem 8rem rgba(0,0,0,.32)}
+.eyebrow{margin:0 0 1rem;color:var(--orange);font-size:.64rem;font-weight:700;letter-spacing:.23em;text-transform:uppercase}
+h1{margin:0;font-family:var(--serif);font-style:italic;font-weight:500;font-size:clamp(3rem,7vw,5.5rem);line-height:.85;letter-spacing:-.055em;overflow-wrap:anywhere}
+.msg{max-width:30rem;margin:1.25rem 0 0;color:var(--muted);font-size:.84rem;line-height:1.8}
+/* очередь: прогресс-кольцо на acid/orange, номер позиции — Cormorant italic */
+.ringwrap{display:flex;align-items:center;gap:2.2rem;margin:2rem 0 0}
 .ring{position:relative;width:132px;height:132px;flex:0 0 132px}
 .ring svg{width:132px;height:132px;transform:rotate(-90deg)}
-.ring .bgc{stroke:color-mix(in srgb, var(--accent) 18%, transparent)}
-.ring .fgc{stroke:var(--accent);stroke-linecap:round;transition:stroke-dashoffset .6s ease}
-.ring .num{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:44px;font-weight:800;letter-spacing:-.03em}
-.side .posline{font-size:13px;color:var(--muted);margin:2px 0}
-.side .posline b{color:var(--text);font-size:15px}
-.spin{display:inline-flex;gap:5px;margin-top:10px}
-.spin i{width:7px;height:7px;border-radius:50%;background:var(--accent);opacity:.3;animation:bl 1.2s infinite}
-.spin i:nth-child(2){animation-delay:.15s}.spin i:nth-child(3){animation-delay:.3s}
-@keyframes bl{0%,80%,100%{opacity:.25}40%{opacity:1}}
-.note{margin-top:16px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;color:var(--muted);font-size:12.5px;line-height:1.55}
-.foot{margin-top:20px;padding-top:14px;border-top:1px solid var(--line);display:flex;justify-content:space-between;
- color:var(--muted);font-size:11px;letter-spacing:.12em;text-transform:uppercase}
-@media (max-width:520px){.card{padding:26px 20px 18px}.ringwrap{flex-direction:column;text-align:center}}
+.ring .bgc{stroke:rgba(255,116,72,.2)}
+.ring .fgc{stroke:var(--acid);stroke-linecap:round;transition:stroke-dashoffset .6s var(--ease)}
+.ring .num{position:absolute;inset:0;display:grid;place-items:center;font-family:var(--serif);font-style:italic;font-weight:500;font-size:3.2rem;line-height:1}
+.side .posline{color:var(--muted);font-size:.72rem;margin:.2rem 0}
+.side .posline b{color:var(--paper);font-size:.84rem;font-weight:700}
+.spin{display:inline-flex;gap:.35rem;margin-top:.8rem}
+.spin i{width:.4rem;height:.4rem;border-radius:50%;background:var(--orange);opacity:.3;animation:blink 1.2s infinite}
+.spin i:nth-child(2){background:var(--acid);animation-delay:.15s}
+.spin i:nth-child(3){background:var(--pink);animation-delay:.3s}
+@keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:1}}
+.note{margin:1.6rem 0 0;color:var(--muted);font-size:.68rem;line-height:1.7}
+.foot{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1.1rem 2rem;border-top:1px solid var(--line);background:#0b0a09;color:var(--muted);font-size:.62rem;letter-spacing:.08em}
+.foot__mark{color:var(--paper);font-weight:700;letter-spacing:-.02em}
+@media (max-width:720px){
+.top{padding:1rem}
+.brand{font-size:.95rem}
+.stage{padding:4.5rem 1rem}
+.card{padding:3.4rem 1.2rem 2rem}
+h1{font-size:clamp(2.4rem,12vw,3.4rem)}
+.msg{font-size:.8rem}
+.ringwrap{flex-direction:column;align-items:flex-start;gap:1.4rem}
+.foot{padding:.9rem 1rem}
+}
+@media (prefers-reduced-motion:reduce){
+*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+}
 </style>
 </head>
 <body>
-<div class="card">
-  <div class="head"><span class="dot"></span> Зал ожидания</div>
-  <h1 id="sl-title">Секунду — вы в очереди</h1>
-  <p class="msg" id="sl-msg">Сейчас на сайте много посетителей. Мы держим для вас место, чтобы всё открывалось быстро.</p>
-  <div class="ringwrap">
-    <div class="ring">
-      <svg viewBox="0 0 120 120">
-        <circle class="bgc" cx="60" cy="60" r="52" fill="none" stroke-width="10"></circle>
-        <circle class="fgc" id="sl-arc" cx="60" cy="60" r="52" fill="none" stroke-width="10"
-                stroke-dasharray="326.7" stroke-dashoffset="245"></circle>
-      </svg>
-      <div class="num" id="sl-pos">…</div>
-    </div>
-    <div class="side">
-      <div class="posline">Ваше место: <b id="sl-posline">определяем…</b></div>
-      <div class="posline">В очереди сейчас: <b id="sl-total">—</b></div>
-      <span class="spin" id="sl-spin"><i></i><i></i><i></i></span>
-    </div>
-  </div>
-  <div class="note" id="sl-note">Страница обновится автоматически, когда подойдёт ваша очередь. Закрывать её не нужно.</div>
-  <div class="foot"><span id="sl-brand">NRG / INDEX</span><span>Очередь защищена</span></div>
+<div class="noise" aria-hidden="true"></div>
+<div class="glow glow--pink" aria-hidden="true"></div>
+<div class="glow glow--orange" aria-hidden="true"></div>
+<div class="page">
+  <header class="top">
+    <p class="brand">Очередь<span class="brand__caption">queue page</span></p>
+    <p class="top__meta"><span class="live"></span> LIVE</p>
+  </header>
+  <main class="stage">
+    <section class="card">
+      <p class="eyebrow">QUEUE</p>
+      <h1 id="sl-title">Секунду — вы в очереди</h1>
+      <p class="msg" id="sl-msg">Сейчас на сайте много посетителей. Мы держим для вас место, чтобы всё открывалось быстро.</p>
+      <div class="ringwrap">
+        <div class="ring">
+          <svg viewBox="0 0 120 120">
+            <circle class="bgc" cx="60" cy="60" r="52" fill="none" stroke-width="10"></circle>
+            <circle class="fgc" id="sl-arc" cx="60" cy="60" r="52" fill="none" stroke-width="10"
+                    stroke-dasharray="326.7" stroke-dashoffset="245"></circle>
+          </svg>
+          <div class="num" id="sl-pos">…</div>
+        </div>
+        <div class="side">
+          <div class="posline">Ваше место: <b id="sl-posline">определяем…</b></div>
+          <div class="posline">В очереди сейчас: <b id="sl-total">—</b></div>
+          <span class="spin" id="sl-spin"><i></i><i></i><i></i></span>
+        </div>
+      </div>
+      <div class="note" id="sl-note">Страница обновится автоматически, когда подойдёт ваша очередь. Закрывать её не нужно.</div>
+    </section>
+  </main>
+  <footer class="foot">
+    <span class="foot__mark" id="sl-brand">NRG / INDEX</span>
+    <span>Очередь защищена</span>
+  </footer>
 </div>
 <script>
 (function(){
@@ -2102,7 +2312,6 @@ h1{font-size:23px;line-height:1.25;margin:16px 0 6px;letter-spacing:-.01em;font-
     if(p.message) elMsg.textContent=p.message;
     if(p.note) elNote.textContent=p.note;
     if(p.brand) elBrand.textContent=p.brand;
-    if(p.color){ document.documentElement.style.setProperty('--accent', p.color); }
     if(j.state==='pass'){ ready(); return; }
     if(j.state==='full'){ elMsg.textContent=T.full; elPos.textContent='—'; elPosLine.textContent='попробуйте позже';
       elSpin.style.display='none'; setTimeout(poll,30000); return; }
@@ -2135,7 +2344,7 @@ h1{font-size:23px;line-height:1.25;margin:16px 0 6px;letter-spacing:-.01em;font-
 
 
 def queue_page_html(preview=None):
-    html = QUEUE_TEMPLATE.safe_substitute()
+    html = QUEUE_TEMPLATE.safe_substitute(fonts=font_css())
     if preview:
         data = json.dumps(preview, ensure_ascii=False).replace('</', '<\\/')
         html = html.replace('<script>',
@@ -4046,10 +4255,6 @@ class H(BaseHTTPRequestHandler):
         if u.path == '/api/page':
             with LOCK:
                 page = json.loads(json.dumps(STATE['page']))
-            page_color = str(page.get('color') or '')
-            if not page_color or page_color == '#0fc6c2':
-                for c in PAGE_DEFS:
-                    page['pages'][c]['color'] = PAGE_DEFS[c]['color']
             defs = {c: {'loc': PAGE_DEFS[c]['loc'], 'title': PAGE_DEFS[c]['title'],
                         'message': PAGE_DEFS[c]['message']} for c in PAGE_DEFS}
             return self._json(200, {'ok': True, 'page': page, 'defs': defs})
