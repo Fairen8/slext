@@ -97,44 +97,44 @@ systemctl list-timers slext-apply.timer
 grep -c '# slext-' /data/safeline/resources/nginx/sites-enabled/IF_*
 ```
 
-## Зал ожидания: не включается/выключается или «вечная загрузка»
+## Зал ожидания (SLExt): диагностика
 
-Переключение идёт через SafeLine с подтверждением факта (до ~10 с); после каждой операции патчи
-сайта восстанавливаются в фоне, а воркер раз в 20 с проверяет маркеры и чинит их сам. Если зал
-«не слушается» — по порядку:
+Зал — **наш** (cookie-гейт в nginx + API), нативный зал SafeLine не используется. Состояние
+и настройки — в блоке «Зал ожидания» (мгновенно). Если что-то не так:
 
 ```bash
-# 1) фактическое состояние в SafeLine и наше состояние
-docker exec safeline-pg psql -U safeline-ce -d safeline-ce -tAc "SELECT is_enabled, updated_at FROM mgt_waiting_room"
+# 1) наш API жив и что он думает
+curl -s http://127.0.0.1:8787/api/health
+curl -s -H "Authorization: Bearer $(cat /tmp/panel_token.txt)" \
+  "http://127.0.0.1:8787/api/waiting?site=energy.fairen8.ru" | head -c 400
 
-# 2) конфиг tengine валиден? (при поломке mgt не может переключить зал)
+# 2) map-файл гейта (какие сайты включены) и конфиг tengine
+cat /data/safeline/resources/nginx/conf.d/zz_slext_queue.conf
 docker exec safeline-tengine nginx -t
 
-# 3) патчи и страница очереди на месте?
-grep -c '# slext-' /data/safeline/resources/nginx/sites-enabled/IF_*
-grep -c 'slext-waiting-page' /data/safeline/resources/nginx/slext-pages/waiting_room.html
-# нет — восстановить: bash /opt/slext/bin/apply-injection.sh
+# 3) страница очереди на месте?
+grep -c 'slext-queue-page' /data/safeline/resources/nginx/slext-pages/queue.html
+# нет — перегенерировать: bash /opt/slext/bin/apply-injection.sh (и «Сохранить настройки» в UI)
 
-# 4) ошибки API и SafeLine
-journalctl -u slext-api -n 80 | tail -40
-docker logs safeline-mgt --since 10m 2>&1 | grep level=ERROR
+# 4) посетитель: свежий запрос должен получить страницу очереди, а не сайт
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: energy.fairen8.ru' \
+  -H 'Accept: text/html' -H 'User-Agent: check' http://127.0.0.1/
 ```
 
 Типовые причины:
-- `check jwt failed: user tfa enabled, but jwt not contain tfa` в mgt — панель отклонила токен;
-  SLExt сам выбирает рабочий токен (кеш 5 мин), перезапуск API ускоряет выбор:
-  `systemctl restart slext-api`.
-- `duplicate "log_format" ... nginx: configuration test failed` — в `sites-enabled` попал бэкап
-  конфига; `apply-injection.sh` уносит такие файлы в `/opt/slext/backups/nginx/`.
-- Кнопка «Переключить (состояние неизвестно)» — SafeLine недоступен; смотрите пункт 4.
+- Очередь «не включается»: посмотрите map-файл (п. 2) и перезагрузите tengine
+  `docker exec safeline-tengine nginx -s reload`; кнопка в UI делает это сама.
+- «Все стоят в очереди»: проверьте настройки (порог/удержание/очередь) — сохраните в UI;
+  кнопка **«Сбросить очередь»** очищает состояние мгновенно.
+- Настройки/лимиты нативного SafeLine-зала (`mgt_waiting_room`) больше не используются.
 
 Юнит-тесты политики авто-режима: `python3 tests/wr_policy_test.py`.
 
 ## Страница очереди — стоковая
 
 ```bash
-ls -la /data/safeline/resources/nginx/slext-pages/            # waiting_room.html есть?
-grep -c 'slext-waiting-page' /data/safeline/resources/nginx/slext-pages/waiting_room.html
+ls -la /data/safeline/resources/nginx/slext-pages/            # queue.html есть?
+grep -c 'slext-queue-page' /data/safeline/resources/nginx/slext-pages/queue.html
 bash /opt/slext/bin/apply-injection.sh                        # перезалить
 ```
 
