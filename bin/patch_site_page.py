@@ -49,17 +49,31 @@ CH_LOC = ('    location = /.safeline/challenge/v2/challenge.css {\n'
           '    }\n')
 
 SKIP_MARK = '# slext-skip'
-SKIP_IF = 'if ($slext_skip) { rewrite ^ /@slext-plain last; } ' + SKIP_MARK + '-if'
-SKIP_CK = 'add_header Set-Cookie "nrgpass=1; Path=/; Max-Age=604800; Secure; SameSite=Lax" always; ' + SKIP_MARK + '-ck'
-SKIP_LOC = ('    location = /@slext-plain {\n'
+SKIP_IF_TPL = 'if ($slext_skip) { rewrite ^ /@slext-plain last; } ' + SKIP_MARK + '-if'
+CUSTOM_PARAMS_DIR = '/data/safeline/resources/nginx/custom_params'
+
+
+def site_backend(text):
+    """Свой backend сайта: (scheme, N) из канонического proxy_pass."""
+    m = re.search(r'proxy_pass\s+(https?)://backend_(\d+);', text)
+    if m:
+        return m.group(1), int(m.group(2))
+    return '', 0
+
+
+def skip_loc(scheme, n):
+    custom = ''
+    if scheme and n and os.path.exists('%s/backend_%d' % (CUSTOM_PARAMS_DIR, n)):
+        custom = '        include /etc/nginx/custom_params/backend_%d;\n' % n
+    return ('    location = /@slext-plain {\n'
             '        internal;\n'
             '        tx_chaos_intercept off; ' + SKIP_MARK + '-plain\n'
-            '        proxy_pass https://backend_1$request_uri;\n'
+            '        proxy_pass %s://backend_%d$request_uri;\n'
             '        include proxy_params;\n'
             '        proxy_set_header Host $http_host;\n'
             '        proxy_set_header Accept-Encoding ""; # slext-enc-pipeline\n'
             '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n'
-            '        include /etc/nginx/custom_params/backend_1;\n'
+            '%s'
             '        t1k_add_user_data "1";\n'
             '        tx_add_user_data "1";\n'
             '        t1k_body_size 1024k;\n'
@@ -69,7 +83,7 @@ SKIP_LOC = ('    location = /@slext-plain {\n'
             '        t1k_error_page 466 /.safeline/offline_page;\n'
             '        tx_error_page 403 /.safeline/forbidden_page;\n'
             '        t1k_error_page 465 /.safeline/waiting_room_page;\n'
-            '    }\n')
+            '    }\n') % (scheme or 'https', n or 1, custom)
 
 
 PX_MARK = '# slext-px-access'
@@ -91,6 +105,58 @@ def patch_px_log(text):
         text = text.replace('access_log /var/log/nginx/access.log safeline;',
                             'access_log /var/log/nginx/access.log safeline;\n    ' + PX_LOG_LINE)
         changed = True
+    return text, changed
+
+
+QUEUE_GW = os.environ.get('SLEXT_GW', '192.168.0.1')
+QUEUE_MARK = '# slext-queue'
+QUEUE_IF_LINE = 'if ($slext_queue_gate) { rewrite ^ /@slext-queue last; } ' + QUEUE_MARK + '-if'
+QUEUE_LOC = ('    location = /@slext-queue {\n'
+             '        alias /etc/nginx/slext-pages/queue.html; ' + QUEUE_MARK + '-loc\n'
+             '        default_type text/html;\n'
+             '        charset utf-8;\n'
+             '        add_header Cache-Control "no-store";\n'
+             '        t1k_intercept off;\n'
+             '        tx_intercept off;\n'
+             '    }\n')
+QUEUE_PROXY = ('    location ^~ /.safeline/slext/ {\n'
+               '        # ' + QUEUE_MARK + '-proxy\n'
+               '        proxy_pass http://%s:8787/api/queue/;\n'
+               '        proxy_set_header Host $host;\n'
+               '        proxy_set_header X-Slext-Host $host;\n'
+               '        proxy_set_header X-Real-IP $remote_addr;\n'
+               '        proxy_read_timeout 10;\n'
+               '        t1k_intercept off;\n'
+               '        tx_intercept off;\n'
+               '        add_header Cache-Control "no-store";\n'
+               '    }\n') % QUEUE_GW
+
+
+def patch_queue(text):
+    """Наш зал: постоянные локации + условный гейт (вкл/выкл — map-файл)."""
+    changed = False
+    if QUEUE_MARK + '-loc' not in text:
+        for anchor in ('    location = /@slext-gate {', '    location = /@slext-plain {',
+                       '    location = /.safeline/not_found_page {'):
+            if anchor in text:
+                text = text.replace(anchor, QUEUE_LOC + anchor, 1)
+                changed = True
+                break
+    if QUEUE_MARK + '-proxy' not in text:
+        if QUEUE_LOC in text:
+            text = text.replace(QUEUE_LOC, QUEUE_LOC + QUEUE_PROXY, 1)
+            changed = True
+        elif '    location ^~ /.safeline/challenge/v2/ {' in text:
+            anchor = '    location ^~ /.safeline/challenge/v2/ {'
+            text = text.replace(anchor, QUEUE_PROXY + anchor, 1)
+            changed = True
+    if QUEUE_MARK + '-if' not in text:
+        m = re.search(r'^([ \t]*)if \(\$slext_gate\) \{ rewrite \^ /@slext-gate last; \}', text, re.M)
+        if not m:
+            m = re.search(r'^([ \t]*)if \(\$slext_skip\) \{ rewrite \^ /@slext-plain last; \}', text, re.M)
+        if m:
+            text = text[:m.start()] + m.group(1) + QUEUE_IF_LINE + '\n' + text[m.start():]
+            changed = True
     return text, changed
 
 
@@ -124,21 +190,36 @@ def patch_gate(text):
 
 def patch_skip(text):
     changed = False
+    scheme, n = site_backend(text)
     if 'slext-skip-ck' in text:
         text = '\n'.join(ln for ln in text.split('\n') if 'slext-skip-ck' not in ln)
         changed = True
     if 'location = /@slext-plain {' not in text:
         m = re.search(r'^    location = /.safeline/not_found_page \{\n', text, re.M)
-        if m:
-            text = text[:m.start()] + SKIP_LOC + text[m.start():]
+        if m and scheme:
+            text = text[:m.start()] + skip_loc(scheme, n) + text[m.start():]
             changed = True
+    else:
+        # миграция: чиним уже вставленный блок, если он указывает на чужой backend
+        mm = re.search(r'location = /@slext-plain \{.*?\n    \}\n', text, re.S)
+        if mm and scheme and n:
+            block = mm.group(0)
+            fixed = re.sub(r'proxy_pass\s+https?://backend_\d+\$request_uri;',
+                           'proxy_pass %s://backend_%d$request_uri;' % (scheme, n), block)
+            fixed = re.sub(r'include /etc/nginx/custom_params/backend_\d+;\n',
+                           ('        include /etc/nginx/custom_params/backend_%d;\n' % n
+                            if os.path.exists('%s/backend_%d' % (CUSTOM_PARAMS_DIR, n)) else ''),
+                           fixed)
+            if fixed != block:
+                text = text[:mm.start()] + fixed + text[mm.end():]
+                changed = True
     if 'if ($slext_skip)' not in text:
-        m = re.search(r'^([ \t]*)proxy_pass\s+https?://backend_1;\n', text, re.M)
+        m = re.search(r'^([ \t]*)proxy_pass\s+https?://backend_\d+;\n', text, re.M)
         if m:
-            text = text[:m.start()] + m.group(1) + SKIP_IF + '\n' + text[m.start():]
+            text = text[:m.start()] + m.group(1) + SKIP_IF_TPL + '\n' + text[m.start():]
             changed = True
     if 'slext-skip-cc' not in text:
-        key = SKIP_IF + '\n'
+        key = SKIP_IF_TPL + '\n'
         i = text.find(key)
         if i >= 0:
             text = text[:i + len(key)] + '        add_header Cache-Control $slext_cc always; # slext-skip-cc\n' + text[i + len(key):]
@@ -232,12 +313,51 @@ def patch_enc_pipeline(text):
     return text, changed
 
 
+def strip_slext(text):
+    """Снять все наши патчи (для служебных сайтов без backend_N)."""
+    orig = text
+    # вернуть стоковые страницы ошибок
+    text = re.sub(r'[ \t]*alias [^;]*; # slext-page\n'
+                  r'(?:[ \t]*default_type text/html;\n)?'
+                  r'(?:[ \t]*charset utf-8;\n)?',
+                  '        ' + PROXY + '\n', text)
+    # убрать целиком вставленные локации
+    for rx in (r'[ \t]*location = /@slext-plain \{.*?\n    \}\n',
+               r'[ \t]*location = /@slext-gate \{.*?\n    \}\n',
+               r'[ \t]*location = /@slext-queue \{.*?\n    \}\n',
+               r'[ \t]*location \^~ /\.safeline/slext/ \{.*?\n    \}\n',
+               r'[ \t]*location = /.safeline/challenge/v2/challenge.css \{.*?\n    \}\n',
+               r'[ \t]*location = /.safeline/static/dynamic.css \{.*?\n    \}\n',
+               r'[ \t]*location = /.safeline/not_found_off \{.*?\n    \}\n'):
+        text = re.sub(rx, '', text, flags=re.S)
+    # строки с нашими маркерами, гео-инклюд и наш access_log
+    keep = []
+    for ln in text.split('\n'):
+        if '# slext-' in ln:
+            continue
+        if 'slext-geo/check.conf' in ln:
+            continue
+        if 'access_log /var/log/nginx/access.log safeline' in ln:
+            continue
+        keep.append(ln)
+    text = '\n'.join(keep)
+    return text, text != orig
+
+
 def patch(path, files):
     try:
         with open(path, encoding='utf-8') as f:
             text = f.read()
     except OSError:
         return False
+    # служебные сайты без backend_N (portal/auth и т.п.) — не патчим и чистим наше
+    scheme0, n0 = site_backend(text)
+    if not scheme0:
+        text2, changed2 = strip_slext(text)
+        if changed2:
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(text2)
+        return changed2
     changed = False
     for fname, loc in PAGES:
         on = fname in files
@@ -300,6 +420,8 @@ def patch(path, files):
     text, ch = patch_skip(text)
     changed = changed or ch
     text, ch = patch_gate(text)
+    changed = changed or ch
+    text, ch = patch_queue(text)
     changed = changed or ch
     text, ch = patch_px_log(text)
     changed = changed or ch

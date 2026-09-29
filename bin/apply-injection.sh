@@ -23,6 +23,7 @@ docker exec safeline-mgt sed -i -E 's|href="/ext/ext\.css(\?v=[0-9]+)?"|href="/e
 
 GW=$(docker network inspect safeline-ce -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null)
 [ -z "$GW" ] && GW=192.168.0.1
+export SLEXT_GW="$GW"
 
 # Разрешаем контейнеру панели ходить в API на docker-мосту (идемпотентно).
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q 'Status: active'; then
@@ -42,6 +43,11 @@ rm -f /tmp/slext-def.conf /tmp/slext-def-patched.conf
 LOGCONF=/data/safeline/resources/nginx/conf.d/zz_slext_access_log.conf
 if [ ! -f "$LOGCONF" ]; then
   printf 'access_log /var/log/nginx/access.log safeline;\n' > "$LOGCONF"
+fi
+
+QMAP=/data/safeline/resources/nginx/conf.d/zz_slext_queue.conf
+if [ ! -f "$QMAP" ]; then
+  printf '# slext-queue map (managed by SLExt API)\nmap $host $slext_queue_on {\n    default 0;\n}\nmap $cookie_slext_q $slext_queue_np {\n    default 1;\n    "~." 0;\n}\nmap "$slext_queue_on$slext_queue_np" $slext_queue_on0 {\n    "11" 1;\n    default 0;\n}\nmap "$slext_queue_on0$request_uri" $slext_queue_gate {\n    "~^1/(@slext-queue|\\.safeline/)" 0;\n    "~^1" 1;\n    default 0;\n}\n' > "$QMAP"
 fi
 
 mkdir -p /data/safeline/resources/nginx/slext-geo /data/safeline/resources/nginx/slext-pages
@@ -93,11 +99,17 @@ for b in /data/safeline/resources/nginx/sites-enabled/*.slext-orig \
 done
 
 SITES=""
+PATCHFILES=""
 for f in /data/safeline/resources/nginx/sites-enabled/IF_*; do
   [ -f "$f" ] || continue
   case "$f" in
     *.slext-orig|*.orig|*.bak) continue ;;
   esac
+  PATCHFILES="$PATCHFILES $f"
+  # служебные сайты без backend_N (portal/auth и т.п.) не патчим
+  if ! grep -qE 'proxy_pass[[:space:]]+https?://backend_[0-9]+;' "$f"; then
+    continue
+  fi
   SITES="$SITES $f"
   if [ ! -f "$BACKUP_DIR/$(basename "$f").slext-orig" ] && ! grep -q '# slext-' "$f"; then
     cp -a "$f" "$BACKUP_DIR/$(basename "$f").slext-orig"
@@ -113,7 +125,7 @@ for f in /data/safeline/resources/nginx/sites-enabled/IF_*; do
 done
 
 if [ -d /data/safeline/resources/nginx/slext-pages ]; then :; else mkdir -p /data/safeline/resources/nginx/slext-pages; fi
-PAGEOUT=$(python3 /opt/slext/bin/patch_site_page.py $SITES 2>/dev/null || true)
+PAGEOUT=$(python3 /opt/slext/bin/patch_site_page.py $PATCHFILES 2>/dev/null || true)
 case "$PAGEOUT" in
   *'patched files: 0'*) ;;
   *'patched files:'*) CHANGED=1 ;;

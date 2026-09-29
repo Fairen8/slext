@@ -1278,6 +1278,10 @@ def page_apply():
     with LOCK:
         page = json.loads(json.dumps(STATE['page']))
     os.makedirs(PAGES_DIR, exist_ok=True)
+    try:
+        queue_write_page()
+    except Exception:
+        pass
     for code, d in PAGE_DEFS.items():
         target = os.path.join(PAGES_DIR, d['file'])
         cfg = (page.get('pages') or {}).get(code) or {}
@@ -1565,11 +1569,11 @@ def wr_read_actual(site_id, token=None, tries=3, pause=0.4):
     return False, None, {}
 
 
-def wr_limits_set(max_concurrent=None, session_timeout=None, max_waiting=None):
-    """Лимиты зала: сохраняем желаемые в state, пишем строку mgt и waiting.yaml.
+def wr_limits_set(host, site_id, max_concurrent=None, session_timeout=None, max_waiting=None):
+    """Лимиты зала сайта: желаемые в state, строка mgt (website_id), waiting.yaml.
 
     Панельный API CE лимиты не меняет, а mgt в момент переключения зала
-    синхронизирует модуль со строкой mgt_waiting_room. Поэтому наши значения
+    синхронизирует модуль со строкой mgt_waiting_room сайта. Поэтому значения
     применяются перед каждым включением (см. wr_apply) и лечатся воркером.
     """
     lim = {}
@@ -1581,18 +1585,22 @@ def wr_limits_set(max_concurrent=None, session_timeout=None, max_waiting=None):
         lim['max_waiting'] = clamp_int(max_waiting, 0, 100000, 200)
     if not lim:
         return False, 'нечего менять'
+    if not site_id:
+        return False, 'сайт не найден'
     with LOCK:
-        cur = dict(((STATE.get('waiting') or {}).get('limits') or {}))
+        sites = STATE.setdefault('waiting', {}).setdefault('sites', {})
+        cfg = sites.setdefault(host, {})
+        cur = dict(cfg.get('limits') or {})
         cur.update(lim)
-        STATE.setdefault('waiting', {})['limits'] = cur
+        cfg['limits'] = cur
         save_state(STATE)
-    ok, err = wr_limits_sql(lim)
+    ok, err = wr_limits_sql(site_id, lim)
     if ok:
         wr_limits_yaml(lim)
     return ok, err
 
 
-def wr_limits_sql(lim):
+def wr_limits_sql(site_id, lim):
     sets, vals = [], []
     for k in ('max_concurrent', 'max_waiting', 'session_timeout'):
         if k in lim:
@@ -1602,8 +1610,19 @@ def wr_limits_sql(lim):
         return True, ''
     try:
         with db() as conn, conn.cursor() as c:
-            c.execute('UPDATE mgt_waiting_room SET ' + ', '.join(sets) + ', updated_at=now() WHERE id=1', vals)
+            c.execute('UPDATE mgt_waiting_room SET ' + ', '.join(sets) +
+                      ', updated_at=now() WHERE website_id=%s', vals + [int(site_id)])
+            if c.rowcount == 0:
+                # строки ещё нет (зал не включали) — создаём с нашими лимитами
+                mc = int(lim.get('max_concurrent') or 100)
+                mw = int(lim.get('max_waiting') or 200)
+                st = int(lim.get('session_timeout') or 3)
+                c.execute('INSERT INTO mgt_waiting_room (created_at, updated_at, name, is_enabled, '
+                          'max_concurrent, max_waiting, session_timeout, website_id) '
+                          'VALUES (now(), now(), %s, false, %s, %s, %s, %s)',
+                          ('website_waiting_room_%d' % int(site_id), mc, mw, st, int(site_id)))
             conn.commit()
+        mgt_conf_forget(int(site_id))
         return True, ''
     except Exception as e:
         return False, str(e)[:200]
@@ -1640,15 +1659,20 @@ def wr_limits_yaml(lim):
             pass
 
 
-def wr_limits_desired():
+def wr_limits_desired(host=None):
     with LOCK:
-        return dict(((STATE.get('waiting') or {}).get('limits') or {}))
+        sites = ((STATE.get('waiting') or {}).get('sites') or {})
+        if host is not None:
+            return dict((sites.get(host) or {}).get('limits') or {})
+        return {h: dict((c or {}).get('limits') or {})
+                for h, c in sites.items() if (c or {}).get('limits')}
 
 
-def wr_limits_actual():
+def wr_limits_actual(site_id):
     try:
         with db() as conn, conn.cursor() as c:
-            c.execute('SELECT max_concurrent, max_waiting, session_timeout FROM mgt_waiting_room WHERE id=1')
+            c.execute('SELECT max_concurrent, max_waiting, session_timeout FROM mgt_waiting_room WHERE website_id=%s',
+                      (int(site_id),))
             r = c.fetchone()
         if r:
             return {'max_concurrent': int(r[0] or 0), 'max_waiting': int(r[1] or 0),
@@ -1658,15 +1682,15 @@ def wr_limits_actual():
     return {}
 
 
-def wr_limits_enforce():
-    """Если строка mgt разошлась с нашими желаемыми лимитами — вернуть наши."""
-    want = wr_limits_desired()
-    if not want:
+def wr_limits_enforce(host, site_id):
+    """Если строка mgt сайта разошлась с нашими желаемыми лимитами — вернуть наши."""
+    want = wr_limits_desired(host)
+    if not want or not site_id:
         return
-    have = wr_limits_actual()
+    have = wr_limits_actual(site_id)
     diff = {k: v for k, v in want.items() if int(have.get(k) or 0) != int(v)}
     if diff:
-        wr_limits_sql(diff)
+        wr_limits_sql(site_id, diff)
 
 
 def wr_apply(host, site_id, desired, source, token=None, notify_change=True):
@@ -1678,7 +1702,7 @@ def wr_apply(host, site_id, desired, source, token=None, notify_change=True):
         if desired:
             # перед включением возвращаем наши лимиты: mgt на переключении
             # синхронизирует модуль именно со строкой mgt_waiting_room
-            wr_limits_enforce()
+            wr_limits_enforce(host, site_id)
         cfg = _wr_cfg(host)
         notify_on = bool((cfg.get('notify') or {}).get('enabled', True))
         mgt_conf_forget(site_id)
@@ -1804,7 +1828,7 @@ body{background-color:var(--primary-color);font-family:PingFang SC,Helvetica Neu
 (function(){
   var T={ready:'Готово — входим на сайт',pending:'Вы в очереди',full:'Очередь переполнена, попробуйте позже',
     conn:'Связь потеряна, восстанавливаем соединение'};
-  var SITE='$hostjs';
+  var PREVIEW=!location.hostname||location.protocol==='about:';
   var elPos=document.getElementById('sl-pos'),elTotal=document.getElementById('sl-total');
   var elMsg=document.getElementById('sl-msg'),elDots=document.getElementById('sl-dots');
   var done=false;
@@ -1822,7 +1846,7 @@ body{background-color:var(--primary-color);font-family:PingFang SC,Helvetica Neu
   }
   function fullPage(){elMsg.textContent=T.full;elPos.textContent='\\u2014';elDots.style.display='none';
     setTimeout(function(){location.reload();},30000);}
-  if(SITE && location.hostname!==SITE){
+  if(PREVIEW){
     /* preview mode: no live queue */
   }else if(/(?:^|;\\s*)sl-waiting-state=full/.test(document.cookie)){
     fullPage();
@@ -1894,21 +1918,317 @@ def waiting_page_html(host, cfg, panel_base=''):
     stats = ''
     if p.get('show_stats', True) and panel_base:
         safe_base = re.sub(r'[^A-Za-z0-9_:/.\-]', '', str(panel_base))[:200].rstrip('/')
-        safe_host = re.sub(r'[^A-Za-z0-9_.\-]', '', host)[:120]
-        if safe_base and safe_host:
-            stats = ("fetch('%s/api/waiting/status?site=%s',{cache:'no-store'}).then(function(r){return r.json();})"
+        if safe_base:
+            stats = ("fetch('%s/api/waiting/status?site='+encodeURIComponent(location.hostname),{cache:'no-store'}).then(function(r){return r.json();})"
                      ".then(function(j){if(j&&j.ok&&j.last){var st=document.getElementById('sl-stats');"
                      "st.style.display='grid';document.getElementById('sl-st-peak').textContent=j.last.top_waiting||0;"
                      "document.getElementById('sl-st-queued').textContent=j.last.total_waiting||0;"
                      "document.getElementById('sl-st-avg').textContent=(j.last.avg_wait_sec||0)+' с';}})"
-                     ".catch(function(){});" % (safe_base, safe_host))
+                     ".catch(function(){});" % safe_base)
     return WAITING_TEMPLATE.safe_substitute(
         title=title, message=message, note=note, firstpos=firstpos, posttext=posttext,
-        brand=brand, accent=color, stats=stats,
-        hostjs=re.sub(r'[^A-Za-z0-9_.\-]', '', host)[:120])
+        brand=brand, accent=color, stats=stats)
 
 
 STATIC_RX = re.compile(r'\.(js|css|png|jpe?g|gif|webp|svg|ico|woff2?|ttf|eot|map|json|txt|xml|mp4|webm)(\?|$)', re.I)
+
+# ------------------------- собственный зал ожидания -------------------------
+# Нативный зал SafeLine CE не даёт менять лимиты (mgt жёстко навязывает 5/0/3)
+# и считает запросы, а не посетителей. Поэтому очередь ведём сами:
+#   * cookie slext_q с токеном; пока токен не допущен — nginx показывает нашу
+#     страницу очереди (гейт в конфиге сайта, включается map-файлом);
+#   * страница опрашивает /.safeline/slext/status (проксируется в наш API);
+#   * API считает активных (допущенные за TTL) и выдаёт место в очереди.
+
+QUEUE_MAP_FILE = '/data/safeline/resources/nginx/conf.d/zz_slext_queue.conf'
+QUEUE_COOKIE = 'slext_q'
+QUEUE_ADMITTED_TTL = 600
+QUEUE_WAIT_TTL = 900
+QUEUE_STATE = {}
+
+
+def queue_state(host):
+    return QUEUE_STATE.setdefault(host, {'admitted': {}, 'waiting': [], 'started': 0,
+                                  'served': 0, 'peak_waiting': 0})
+
+
+QUEUE_TEMPLATE = Template('''<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Очередь</title>
+<!-- slext-queue-page -->
+<style>
+:root{--accent:#0067B8}
+*{box-sizing:border-box}html,body{height:100%}
+body{margin:0;min-height:100%;display:flex;align-items:center;justify-content:center;padding:24px;
+ background:radial-gradient(1200px 620px at 12% -12%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 62%),
+ radial-gradient(900px 520px at 112% 112%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 58%),
+ linear-gradient(160deg,#070b12,#0d1420);color:#e8eef7;
+ font-family:Inter,ui-sans-serif,system-ui,"Segoe UI",Roboto,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{width:100%;max-width:600px}
+.card{position:relative;overflow:hidden;background:rgba(22,30,44,.78);border:1px solid rgba(255,255,255,.09);
+ border-radius:24px;padding:40px 36px 26px;box-shadow:0 34px 90px -34px rgba(0,0,0,.6);
+ backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+.glow{position:absolute;top:-42%;right:-18%;width:360px;height:360px;pointer-events:none;
+ background:radial-gradient(closest-side, color-mix(in srgb, var(--accent) 42%, transparent), transparent);filter:blur(26px);opacity:.55}
+.badge{display:inline-flex;align-items:center;gap:10px;padding:7px 13px;border:1px solid rgba(255,255,255,.09);
+ border-radius:999px;color:#93a4bd;font-size:11.5px;letter-spacing:.14em;text-transform:uppercase}
+.ic{width:40px;height:40px;border-radius:13px;display:inline-flex;align-items:center;justify-content:center;
+ background:color-mix(in srgb, var(--accent) 17%, transparent);border:1px solid color-mix(in srgb, var(--accent) 36%, transparent);color:var(--accent)}
+.ic svg{width:22px;height:22px}
+h1{font-size:24px;margin:18px 0 8px;letter-spacing:-.01em;font-weight:700}
+p{color:#93a4bd;line-height:1.65;margin:0 0 16px;font-size:15px}
+.queue{display:flex;align-items:baseline;gap:10px;margin:6px 0 2px;flex-wrap:wrap}
+.pos{font-size:clamp(46px,11vw,74px);font-weight:800;letter-spacing:-.04em;line-height:1;
+ background:linear-gradient(118deg,var(--accent), color-mix(in srgb, var(--accent) 35%, #fff));
+ -webkit-background-clip:text;background-clip:text;color:transparent}
+.oflabel{color:#93a4bd;font-size:14px}
+.dots{display:inline-flex;gap:6px;margin-left:6px}
+.dots i{width:8px;height:8px;border-radius:50%;background:var(--accent);opacity:.35;animation:bl 1.2s infinite}
+.dots i:nth-child(2){animation-delay:.15s}.dots i:nth-child(3){animation-delay:.3s}.dots i:nth-child(4){animation-delay:.45s}
+@keyframes bl{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-3px)}}
+.hint{margin-top:10px;font-size:12.5px;color:#93a4bd}
+.foot{margin-top:24px;padding-top:15px;border-top:1px solid rgba(255,255,255,.09);display:flex;justify-content:space-between;
+ align-items:center;color:#93a4bd;font-size:11.5px;letter-spacing:.1em;text-transform:uppercase}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block;margin-right:8px;
+ box-shadow:0 0 12px var(--accent);vertical-align:1px}
+@media (max-width:480px){.card{padding:28px 22px 20px;border-radius:20px}}
+</style>
+</head>
+<body>
+<div class="wrap"><div class="card"><span class="glow"></span>
+  <span class="badge"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+   stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span> Зал ожидания</span>
+  <h1 id="sl-title">Секунду, вы в очереди</h1>
+  <p id="sl-msg">Сейчас очень много посетителей. Мы держим вас в очереди, чтобы сайт работал быстро.</p>
+  <div class="queue"><span class="pos" id="sl-pos">…</span>
+    <span class="oflabel">Ваше место в очереди из <b id="sl-total">—</b></span>
+    <span class="dots" id="sl-dots"><i></i><i></i><i></i><i></i></span></div>
+  <div class="hint" id="sl-note">Страница обновится автоматически, когда подойдёт ваша очередь.</div>
+  <div class="foot"><span><i class="dot"></i><span id="sl-brand">NRG / INDEX</span></span><span>ЗАЩИЩЕНО NRG / INDEX</span></div>
+</div></div>
+<script>
+(function(){
+  var T={pass:'Готово — входим на сайт',wait:'Вы в очереди',full:'Очередь переполнена, попробуйте позже',
+    conn:'Связь потеряна, восстанавливаем соединение'};
+  var elPos=document.getElementById('sl-pos'),elTotal=document.getElementById('sl-total');
+  var elMsg=document.getElementById('sl-msg'),elDots=document.getElementById('sl-dots');
+  var elTitle=document.getElementById('sl-title'),elNote=document.getElementById('sl-note'),elBrand=document.getElementById('sl-brand');
+  var done=false,delay=1500,fails=0;
+  function ready(){if(done)return;done=true;elMsg.textContent=T.pass;elPos.textContent='\\u2713';elDots.style.display='none';
+    try{document.cookie='nrgpass=1; Path=/; Max-Age=604800; SameSite=Lax';}catch(e){}
+    setTimeout(function(){location.reload();},1200);}
+  function render(j){
+    if(!j)return;
+    var p=j.page||{};
+    if(p.title){elTitle.textContent=p.title;document.title=p.title;}
+    if(p.message)elMsg.textContent=p.message;
+    if(p.note)elNote.textContent=p.note;
+    if(p.brand)elBrand.textContent=p.brand;
+    if(p.color){document.documentElement.style.setProperty('--accent',p.color);}
+    if(j.state==='pass'){ready();return;}
+    if(j.state==='full'){elMsg.textContent=T.full;elPos.textContent='\\u2014';elDots.style.display='none';
+      setTimeout(poll,30000);return;}
+    elMsg.textContent=T.wait;
+    elPos.textContent=(typeof j.pos==='number'&&j.pos>0)?j.pos:'…';
+    elTotal.textContent=(typeof j.total==='number'&&j.total>0)?j.total:'—';
+  }
+  function schedule(ms){setTimeout(poll,ms);}
+  function poll(){
+    if(done)return;
+    if(document.hidden){schedule(8000);return;}
+    fetch('/.safeline/slext/status',{cache:'no-store'}).then(function(r){if(r.status!==200)throw 0;return r.json();})
+      .then(function(j){fails=0;render(j);if(!done)schedule(delay);})
+      .catch(function(){fails++;elMsg.textContent=T.conn;schedule(Math.min(15000,2000+fails*2000));});
+  }
+  poll();
+  document.addEventListener('visibilitychange',function(){if(!document.hidden&&!done)schedule(400);});
+})();
+</script>
+</body>
+</html>
+''')
+
+
+def queue_page_html():
+    return QUEUE_TEMPLATE.safe_substitute()
+
+
+def queue_write_page():
+    os.makedirs(PAGES_DIR, exist_ok=True)
+    target = os.path.join(PAGES_DIR, 'queue.html')
+    try:
+        with open(target, 'w', encoding='utf-8') as f:
+            f.write(queue_page_html())
+        return True
+    except OSError:
+        return False
+
+
+def queue_stats(host):
+    now = time.time()
+    st = queue_state(host)
+    active = len([1 for ts in st['admitted'].values() if now - ts <= QUEUE_ADMITTED_TTL])
+    return {'active': active, 'waiting': len(st['waiting']), 'served': st.get('served', 0),
+            'peak_waiting': st.get('peak_waiting', 0), 'started_at': st.get('started', 0)}
+
+
+def queue_reset_state(host):
+    queue_state(host).update({'admitted': {}, 'waiting': [], 'served': 0, 'peak_waiting': 0,
+                              'started': int(time.time())})
+
+
+def handle_queue_status(self):
+    """GET /api/queue/status — со страницы очереди через прокси сайта."""
+    host = ''
+    try:
+        host = str(self.headers.get('X-Slext-Host') or '').strip()[:200]
+        if not host:
+            host = str(self.headers.get('Host') or '').split(':')[0].strip()[:200]
+    except Exception:
+        host = ''
+    if not site_by_host(host):
+        qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        host = (qs.get('site') or [''])[0][:200].split(':')[0]
+    site = site_by_host(host) if host else None
+    if not site:
+        return self._json(200, {'ok': False, 'error': 'site not found'})
+    cfg = queue_cfg(host)
+    token = ''
+    try:
+        for part in (self.headers.get('Cookie') or '').split(';'):
+            part = part.strip()
+            if part.startswith(QUEUE_COOKIE + '='):
+                token = part.split('=', 1)[1][:64]
+    except Exception:
+        token = ''
+    if not token:
+        token = secrets.token_hex(16)
+    new_token, state, pos, total = queue_status(host, token)
+    page_cfg = waiting_cfg(host)['page'] or {}
+    data = {'ok': True, 'state': state, 'pos': pos, 'total': total,
+            'enabled': bool(cfg.get('enabled')),
+            'page': {k: page_cfg.get(k) for k in ('title', 'message', 'note', 'posttext', 'brand', 'color')}}
+    extra = []
+    if not token and new_token:
+        extra.append(('Set-Cookie',
+                      '%s=%s; Path=/; Max-Age=%d; SameSite=Lax' % (QUEUE_COOKIE, new_token, 86400)))
+    return self._json(200, data, extra=extra)
+
+
+def queue_defaults():
+    return {'enabled': False, 'max_concurrent': 100, 'ttl': 600, 'max_waiting': 200}
+
+
+def queue_cfg(host):
+    with LOCK:
+        cfg = ((STATE.get('waiting') or {}).get('sites') or {}).get(host) or {}
+        q = dict(queue_defaults())
+        q.update(cfg.get('queue') or {})
+        return q
+
+
+def queue_sync_map():
+    """Пересобрать map-файл гейта по всем сайтам из state."""
+    with LOCK:
+        sites = ((STATE.get('waiting') or {}).get('sites') or {})
+        on = [h for h, c in sites.items() if (c or {}).get('queue', {}).get('enabled')]
+    lines = ['# slext-queue map (managed by SLExt API)',
+             'map $host $slext_queue_on {',
+             '    default 0;']
+    for h in sorted(on):
+        if re.match(r'^[A-Za-z0-9_.\-]{3,120}$', h):
+            lines.append('    %s 1;' % h)
+    lines += ['}',
+              'map $cookie_%s $slext_queue_np {' % QUEUE_COOKIE,
+              '    default 1;',
+              '    "~." 0;',
+              '}',
+              'map "$slext_queue_on$slext_queue_np" $slext_queue_on0 {',
+              '    "11" 1;',
+              '    default 0;',
+              '}',
+              'map "$slext_queue_on0$request_uri" $slext_queue_gate {',
+              '    "~^1/(@slext-queue|\\.safeline/)" 0;',
+              '    "~^1" 1;',
+              '    default 0;',
+              '}']
+    txt = '\n'.join(lines) + '\n'
+    try:
+        cur = ''
+        if os.path.exists(QUEUE_MAP_FILE):
+            cur = open(QUEUE_MAP_FILE, encoding='utf-8', errors='replace').read()
+        if cur != txt:
+            open(QUEUE_MAP_FILE, 'w', encoding='utf-8').write(txt)
+            run(['docker', 'exec', 'safeline-tengine', 'nginx', '-s', 'reload'], timeout=30)
+            return True
+    except OSError:
+        pass
+    return False
+
+
+def queue_status(host, token):
+    """Статус посетителя: pass / wait / full. Токен регистрируется при отсутствии."""
+    now = time.time()
+    cfg = queue_cfg(host)
+    st = queue_state(host)
+    # чистим старых
+    for t in [t for t, ts in st['admitted'].items() if now - ts > max(60, int(cfg['ttl']))]:
+        st['admitted'].pop(t, None)
+    st['waiting'] = [(t, ts) for t, ts in st['waiting'] if now - ts < QUEUE_WAIT_TTL]
+    if not token:
+        return None, 'wait', 0, 0
+    admitted = token in st['admitted']
+    if admitted:
+        st['admitted'][token] = now
+        return token, 'pass', 0, 0
+    waiting = [t for t, _ in st['waiting']]
+    if token not in waiting:
+        st['waiting'].append((token, now))
+        st['peak_waiting'] = max(st['peak_waiting'], len(st['waiting']))
+        waiting = [t for t, _ in st['waiting']]
+        if len(waiting) > max(1, int(cfg['max_waiting'])):
+            st['waiting'] = [(t, ts) for t, ts in st['waiting'] if t != token]
+            return token, 'full', 0, 0
+    active = len(st['admitted'])
+    if active < max(1, int(cfg['max_concurrent'])):
+        st['waiting'] = [(t, ts) for t, ts in st['waiting'] if t != token]
+        st['admitted'][token] = now
+        st['served'] += 1
+        return token, 'pass', 0, 0
+    pos = waiting.index(token) + 1 if token in waiting else len(waiting) + 1
+    return token, 'wait', pos, len(st['waiting'])
+
+
+def queue_apply(host, enabled=None, max_concurrent=None, ttl=None, max_waiting=None):
+    """Настройки нашего зала сайта + синхронизация nginx-гейта."""
+    with LOCK:
+        sites = STATE.setdefault('waiting', {}).setdefault('sites', {})
+        cfg = sites.setdefault(host, {})
+        q = cfg.setdefault('queue', {})
+        if enabled is not None:
+            was = bool(q.get('enabled'))
+            q['enabled'] = bool(enabled)
+            qst = queue_state(host)
+            if enabled and not was:
+                qst.update({'admitted': {}, 'waiting': [], 'served': 0, 'peak_waiting': 0,
+                            'started': int(time.time())})
+        if max_concurrent is not None:
+            q['max_concurrent'] = clamp_int(max_concurrent, 1, 5000, 100)
+        if ttl is not None:
+            q['ttl'] = clamp_int(ttl, 30, 86400, 600)
+        if max_waiting is not None:
+            q['max_waiting'] = clamp_int(max_waiting, 1, 100000, 200)
+        save_state(STATE)
+    queue_sync_map()
+    return queue_cfg(host)
+
+
+def site_patch_queue_line():
+    return 'if ($slext_queue_gate) { rewrite ^ /@slext-queue last; } # slext-queue-if'
 RATE_CACHE = {'at': 0, 'window': 0, 'value': 0}
 
 
@@ -2034,43 +2354,26 @@ def _wr_tick(first=False):
         hosts = list(((STATE.get('waiting') or {}).get('sites') or {}).keys())
     if not hosts:
         return
-    try:
-        wr_limits_enforce()
-    except Exception:
-        pass
     if not WR_PATCH.get('running') and not site_markers_ok():
         site_patch_ensure(delay=0.2)
     for host in hosts:
         site = site_by_host(host)
         if not site:
             continue
+        try:
+            wr_limits_enforce(host, site['id'])
+        except Exception:
+            pass
         cfg = waiting_cfg(host)
         st = cfg.get('state') or {}
-        okr, actual, _cf = wr_read_actual(site['id'], tries=3 if first else 1)
-        if not okr:
-            continue
-        pending = st.get('pending')
-        if pending is not None:
-            if bool(pending) == actual:
-                _wr_state_patch(host, {'pending': None, 'pending_source': '', 'pending_tries': 0,
-                                       'enabled': actual, 'error': '', 'error_at': 0})
-            else:
-                tries = int(st.get('pending_tries') or 0)
-                if tries >= 5:
-                    _wr_state_patch(host, {'pending': None, 'pending_source': '', 'pending_tries': 0,
-                                           'error': 'не удалось переключить зал (5 попыток): ' +
-                                                    str(st.get('error') or ''),
-                                           'error_at': int(time.time())})
-                elif time.time() >= int(st.get('retry_at') or 0) and not WR_OP_LOCK.locked():
-                    res = wr_apply(host, site['id'], bool(pending),
-                                   str(st.get('pending_source') or 'manual-retry'),
-                                   token=None, notify_change=False)
-                    if res.get('ok'):
-                        _wr_state_patch(host, {'pending_tries': 0})
-                    else:
-                        _wr_state_patch(host, {'retry_at': int(time.time()) + 30,
-                                               'pending_tries': tries + 1})
-            continue
+        actual = bool((cfg.get('queue') or {}).get('enabled'))
+        # подчищаем наследие нативного зала (pending/ошибки старых версий)
+        if st.get('pending') is not None or st.get('error') or st.get('pending_tries'):
+            _wr_state_patch(host, {'pending': None, 'pending_source': '', 'pending_tries': 0,
+                                   'error': '', 'error_at': 0})
+            st = dict(st)
+            st['pending'] = None
+            st['error'] = ''
         if bool(st.get('enabled')) != actual:
             _wr_state_patch(host, {'enabled': actual, 'error': '', 'error_at': 0})
             st = dict(st)
@@ -2106,7 +2409,12 @@ def _wr_tick(first=False):
             except Exception:
                 pass
         if desired is not None and bool(desired) != actual:
-            wr_apply(host, site['id'], desired, source, token=None)
+            queue_apply(host, enabled=bool(desired))
+            ts = int(time.time())
+            patch = {'enabled': bool(desired), 'source': source, 'changed_at': ts}
+            if source in ('manual', 'manual-retry'):
+                patch['manual_at'] = ts
+            _wr_state_patch(host, patch)
         _wr_sync_sessions(site, host, bool((cfg.get('notify') or {}).get('enabled', True)))
     with LOCK:
         save_state(STATE)
@@ -3082,6 +3390,7 @@ PERM_POST = {
     '/api/crowdsec/unban': 'crowdsec.ban',
     '/api/dns/check': 'dns.check',
     '/api/waiting/config': 'wr.control',
+    '/api/waiting/queue': 'wr.control',
     '/api/waiting/extras': 'wr.settings',
     '/api/waiting/page': 'wr.settings',
     '/api/waiting/reset': 'wr.control',
@@ -3180,11 +3489,13 @@ class H(BaseHTTPRequestHandler):
         auth = self.headers.get('Authorization', '')
         return auth[7:] if auth.startswith('Bearer ') else ''
 
-    def _json(self, code, obj):
+    def _json(self, code, obj, extra=None):
         data = json.dumps(obj, ensure_ascii=False).encode()
         self.send_response(code)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self._cors()
+        for k, v in (extra or []):
+            self.send_header(k, v)
         self.send_header('Content-Length', str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -3258,6 +3569,8 @@ class H(BaseHTTPRequestHandler):
             with LOCK:
                 sk = json.loads(json.dumps(STATE.get('skip') or {'enabled': True}))
             return self._json(200, {'ok': True, 'skip': sk})
+        if u.path == '/api/queue/status':
+            return handle_queue_status(self)
         if u.path == '/api/waiting/status':
             host = qs.get('site', [''])[0][:200]
             site = site_by_host(host)
@@ -3337,8 +3650,11 @@ class H(BaseHTTPRequestHandler):
                                     'site': site, 'mgt': conf, 'mgt_ok': bool(conf), 'cfg': cfg,
                                     'live_rate': live, 'stats': stats, 'panel_base': panel_base,
                                     'busy': WR_OP_LOCK.locked(), 'patch': patch,
-                                    'limits': {'desired': wr_limits_desired(),
-                                               'actual': wr_limits_actual()}})
+                                    'limits': {'desired': wr_limits_desired(host),
+                                               'actual': wr_limits_actual(site['id']) if site else {}},
+                                    'queue': queue_cfg(host) if host else queue_defaults(),
+                                    'queue_stats': queue_stats(host) if host else
+                                    {'active': 0, 'waiting': 0, 'served': 0, 'peak_waiting': 0, 'started_at': 0}})
         if u.path == '/api/loadtest':
             with LOCK:
                 job = json.loads(json.dumps(STATE.get('loadtest') or {}))
@@ -3811,14 +4127,35 @@ class H(BaseHTTPRequestHandler):
                        'mgt': mgt, 'mgt_ok': bool(mgt), 'cfg': waiting_cfg(host),
                        'changed': bool(res.get('changed'))}
             return self._json(200 if res.get('ok') else 400, payload)
+        if u.path == '/api/waiting/queue':
+            host = str(body.get('site') or '')[:200]
+            if not self._host_ok(host):
+                return self._json(403, {'ok': False, 'error': 'нет доступа к домену ' + host})
+            site = site_by_host(host)
+            if not site:
+                return self._json(400, {'ok': False, 'error': 'site not found'})
+            if body.get('reset'):
+                queue_reset_state(host)
+            q = queue_apply(host,
+                            enabled=bool(body.get('enabled')) if 'enabled' in body else None,
+                            max_concurrent=body.get('max_concurrent'),
+                            ttl=body.get('ttl'),
+                            max_waiting=body.get('max_waiting'))
+            if 'enabled' in body:
+                ts = int(time.time())
+                _wr_state_patch(host, {'enabled': bool(body.get('enabled')), 'source': 'manual',
+                                       'changed_at': ts, 'manual_at': ts, 'error': '', 'error_at': 0})
+            queue_write_page()
+            return self._json(200, {'ok': True, 'queue': q, 'stats': queue_stats(host)})
         if u.path == '/api/waiting/reset':
             host = str(body.get('site') or '')[:200]
             if not self._host_ok(host):
                 return self._json(403, {'ok': False, 'error': 'нет доступа к домену ' + host})
+            # сброс очереди SafeLine (модуль) — редко нужен; наш зал сбрасывается через /api/waiting/queue
             run(['docker', 'restart', 'safeline-tengine'], timeout=120)
             time.sleep(7)
             mgt_conf_forget(1)
-            return self._json(200, {'ok': True, 'info': 'очередь сброшена (модуль перезапущен)', 'mgt': waiting_conf(1)})
+            return self._json(200, {'ok': True, 'info': 'модуль зала SafeLine перезапущен', 'mgt': waiting_conf(1)})
         if u.path == '/api/waiting/page':
             host = str(body.get('site') or '')[:200]
             if not self._host_ok(host):
@@ -3897,7 +4234,9 @@ class H(BaseHTTPRequestHandler):
             lim = body.get('limits') or {}
             lim_ok, lim_err = True, ''
             if lim:
-                lim_ok, lim_err = wr_limits_set(lim.get('max_concurrent'),
+                _site = site_by_host(host)
+                lim_ok, lim_err = wr_limits_set(host, _site['id'] if _site else 0,
+                                                lim.get('max_concurrent'),
                                                 lim.get('session_timeout'),
                                                 lim.get('max_waiting'))
             page_apply()
@@ -4004,16 +4343,13 @@ class H(BaseHTTPRequestHandler):
                           'hold_off': int(rec.get('hold_off') or 4),
                           'cooldown': int(rec.get('cooldown') or 600),
                           'min_off': int(rec.get('min_off') or 600)})
+                lim = cfg.setdefault('limits', {})
+                lim['max_concurrent'] = max(100, int(rec.get('max_concurrent') or 100))
                 save_state(STATE)
-            code, _data = 200, {}
-            try:
-                with db() as conn, conn.cursor() as c:
-                    c.execute('UPDATE mgt_waiting_room SET max_concurrent=%s WHERE website_id=%s',
-                              (max(100, int(rec.get('max_concurrent') or 100)), site['id']))
-                    conn.commit()
-            except Exception:
-                code = 0
-            return self._json(200, {'ok': True, 'mgt_applied': code == 200,
+            ok2, err2 = wr_limits_sql(site['id'], {'max_concurrent': lim['max_concurrent']})
+            if not ok2:
+                return self._json(400, {'ok': False, 'error': err2 or 'не удалось применить лимит'})
+            return self._json(200, {'ok': True, 'mgt_applied': True,
                                     'cfg': waiting_cfg(host), 'mgt': waiting_conf(site['id'])})
         if u.path == '/api/crowdsec/ban':
             ok, info = crowdsec_ban(body.get('ip'), body.get('duration'), body.get('reason'))

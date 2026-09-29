@@ -2,7 +2,7 @@
   'use strict';
 
   var API = location.origin + '/extapi';
-  var EXTVER = '50';
+  var EXTVER = '51';
 
   function tok() {
     try { return localStorage.getItem('safeline_auth') || ''; } catch (e) { return ''; }
@@ -1513,30 +1513,29 @@
   }
 
   function wrRender(d) {
-    var mgt = d.mgt || {}, cfg = d.cfg || {}, st = cfg.state || {};
-    var known = !!(mgt && typeof mgt.is_enabled === 'boolean');
-    var on = !!mgt.is_enabled;
+    var cfg = d.cfg || {}, st = cfg.state || {};
+    var q = d.queue || {}, qs = d.queue_stats || {};
+    var on = !!q.enabled;
     var srcNames = { auto: 'авто по нагрузке', schedule: 'расписание', manual: 'вручную', 'manual-retry': 'вручную (повтор)' };
     var set = function (id, html) { var e = document.getElementById(id); if (e) e.innerHTML = html; };
     var setTxt = function (id, txt) { var e = document.getElementById(id); if (e) e.textContent = txt; };
-    var last = (d.stats && d.stats.history && d.stats.history[0]) || null;
-    var wrLast = last
-      ? ('последняя активация ' + new Date(last.started_at * 1000).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }))
-      : 'активаций не было';
-    setTxt('sl-wr-head', (known ? (on ? 'включён' : 'выключен') : 'состояние неизвестно') + ' · ' + wrLast);
-    setTxt('sl-wr-limits', 'Лимиты CE: порог ' + (mgt.max_concurrent || '-') + ', таймаут ' +
-      (mgt.session_timeout || '-') + ' с. Страница очереди — наша, с живой позицией.');
-    setTxt('sl-wr-status', known ? (on ? 'включён' : 'выключен') : 'неизвестно');
-    var bits = 'источник: ' + (srcNames[st.source] || 'вручную');
+    setTxt('sl-wr-head', (on ? 'включён' : 'выключен') + ' · активны ' + (qs.active || 0) +
+      ', в очереди ' + (qs.waiting || 0) + ', обслужено ' + (qs.served || 0));
+    setTxt('sl-wr-limits', 'Наш зал (SLExt): порог ' + (q.max_concurrent || '-') +
+      ', удержание слота ' + (q.ttl || '-') + ' с, очередь до ' + (q.max_waiting || '-') +
+      '. Считаются посетители (cookie), а не запросы.');
+    setTxt('sl-wr-status', on ? 'включён' : 'выключен');
+    var bits = 'источник: ' + (srcNames[st.source] || 'вручную') +
+      ' · пик очереди ' + (qs.peak_waiting || 0) +
+      (qs.started_at ? (' · с ' + new Date(qs.started_at * 1000).toLocaleTimeString('ru-RU')) : '');
     if (d.busy) bits += ' · операция выполняется…';
-    if (st.pending === true || st.pending === false) bits += ' · ожидает переключения';
     setTxt('sl-wr-src', bits);
     var btn = document.getElementById('sl-wr-toggle');
     if (btn) {
       if (WR_BUSY) { btn.disabled = true; }
       else {
-        btn.textContent = known ? (on ? 'Выключить' : 'Включить') : 'Переключить';
-        btn.disabled = !known;
+        btn.textContent = on ? 'Выключить' : 'Включить';
+        btn.disabled = false;
       }
     }
     if (st.error) wrErr(String(st.error)); else wrErr('');
@@ -1561,9 +1560,7 @@
 
   function wrBuild(d) {
     var cfg = d.cfg || {};
-    var mgt = d.mgt || {};
-    var lim = (d.limits && (d.limits.desired && Object.keys(d.limits.desired).length
-                            ? d.limits.desired : d.limits.actual)) || {};
+    var q = d.queue || {};
     var page = cfg.page || {}, sch = cfg.schedule || {}, au = cfg.auto || {}, nf = cfg.notify || {};
     var dayNames = [['1', 'Пн'], ['2', 'Вт'], ['3', 'Ср'], ['4', 'Чт'], ['5', 'Пт'], ['6', 'Сб'], ['7', 'Вс']];
     var days = dayNames.map(function (x) {
@@ -1583,16 +1580,16 @@
       '<div class="sl-kpis" id="sl-wr-kpis"></div>' +
       '<div class="sl-sub">Активации по дням</div><div id="sl-wr-bars"></div>' +
       '<div class="sl-hint" id="sl-wr-updated"></div>' +
-      '<details class="sl-details"><summary>Лимиты зала (SafeLine)</summary>' +
-      '<div class="sl-hint">Панельный API SafeLine в CE эти значения не меняет — управляем мы. Порог включения: одновременных активных посетителей, при превышении новые встают в очередь. Таймаут сессии: 1–30 (мин). Макс. очередь: 0 — без ограничения. Значения применяются при следующем включении зала.</div>' +
-      '<div class="sl-row"><label data-sl-tip="Сколько одновременных активных посетителей допускается, прежде чем включится очередь.">порог включения, посетителей</label>' +
-      '<input class="sl-input sl-w" id="sl-wr-lim-max" type="number" min="1" max="5000" value="' + esc(lim.max_concurrent || 100) + '">' +
-      '<label data-sl-tip="Сколько минут держится активная сессия посетителя после последнего запроса.">таймаут сессии, мин</label>' +
-      '<input class="sl-input sl-w" id="sl-wr-lim-to" type="number" min="1" max="30" value="' + esc(lim.session_timeout || 3) + '">' +
-      '<label data-sl-tip="Предел очереди; 0 — без ограничения.">макс. очередь</label>' +
-      '<input class="sl-input sl-w" id="sl-wr-lim-wait" type="number" min="0" value="' + esc(lim.max_waiting || 0) + '">' +
-      '<button class="sl-btn sl-btn-pri" id="sl-wr-lim-save">Сохранить лимиты</button>' +
-      '<button class="sl-btn" id="sl-wr-lim-reset" title="Перезапустить модуль очереди (сайт может мигнуть 2–5 секунд)">Сбросить очередь</button></div></details>' +
+      '<details class="sl-details" open><summary>Настройки очереди (SLExt)</summary>' +
+      '<div class="sl-hint">Свой зал: считает посетителей (по cookie), а не запросы. «Порог» — сколько одновременно активных посетителей пропускаем; при превышении новые видят страницу очереди. «Удержание слота» — сколько секунд визит считается активным. «Макс. очередь» — сколько человек ждут.</div>' +
+      '<div class="sl-row"><label data-sl-tip="Сколько одновременных активных посетителей допускается, прежде чем включится очередь.">порог, посетителей</label>' +
+      '<input class="sl-input sl-w" id="sl-wr-lim-max" type="number" min="1" max="5000" value="' + esc(q.max_concurrent || 100) + '">' +
+      '<label data-sl-tip="Сколько секунд держится слот посетителя после последнего запроса.">удержание слота, с</label>' +
+      '<input class="sl-input sl-w" id="sl-wr-lim-ttl" type="number" min="30" max="86400" value="' + esc(q.ttl || 600) + '">' +
+      '<label data-sl-tip="Сколько человек могут стоять в очереди.">макс. очередь</label>' +
+      '<input class="sl-input sl-w" id="sl-wr-lim-wait" type="number" min="1" value="' + esc(q.max_waiting || 200) + '">' +
+      '<button class="sl-btn sl-btn-pri" id="sl-wr-lim-save">Сохранить настройки</button>' +
+      '<button class="sl-btn" id="sl-wr-lim-reset" title="Очистить очередь и счётчики (мгновенно)">Сбросить очередь</button></div></details>' +
       '<details class="sl-details"><summary>Автоматизация: расписание, авто-режим, уведомления</summary>' +
       '<div class="sl-row"><label><input type="checkbox" id="sl-wr-sch-on"' + (sch.enabled ? ' checked' : '') + '> по расписанию</label>' + days + '</div>' +
       '<div class="sl-row"><label>с</label><input class="sl-input sl-w" id="sl-wr-from" value="' + esc(sch.from) + '">' +
@@ -1626,25 +1623,27 @@
     if (old) old.remove();
     WR_BOX.appendChild(card);
     lockBtn(card, 'sl-wr-toggle', 'wr.control');
+    lockBtn(card, 'sl-wr-lim-save', 'wr.control');
+    lockBtn(card, 'sl-wr-lim-reset', 'wr.control');
     lockBtn(card, 'sl-wr-save-ext', 'wr.settings');
     lockBtn(card, 'sl-wr-p-save', 'wr.settings');
     card.addEventListener('click', function (e) {
       var site = WR_LAST ? WR_LAST.host : WR_SITE;
       if (e.target.id === 'sl-wr-toggle') {
         var b = e.target;
-        var cur = !!(WR_LAST && WR_LAST.mgt && WR_LAST.mgt.is_enabled);
+        var cur = !!(WR_LAST && WR_LAST.queue && WR_LAST.queue.enabled);
         var want = !cur;
         WR_BUSY = true;
         b.disabled = true;
         b.textContent = want ? 'Включаю…' : 'Выключаю…';
-        api('/api/waiting/config', { method: 'POST', body: { site: site, enabled: want } }).then(function (r) {
+        api('/api/waiting/queue', { method: 'POST', body: { site: site, enabled: want } }).then(function (r) {
           WR_BUSY = false;
           b.disabled = false;
           b.textContent = want ? 'Выключить' : 'Включить';
           toast(r.ok ? ('Зал ожидания ' + (want ? 'включён' : 'выключен')) : ('Ошибка: ' + (r.error || 'не удалось')), !r.ok);
-          if (r.ok && r.mgt_ok && WR_LAST) {
-            WR_LAST.mgt = r.mgt;
-            WR_LAST.mgt_ok = true;
+          if (r.ok && WR_LAST) {
+            WR_LAST.queue = r.queue;
+            WR_LAST.queue_stats = r.stats;
             wrRender(WR_LAST);
           }
           wrLoad(false);
@@ -1653,19 +1652,18 @@
       }
       if (e.target.id === 'sl-wr-refresh') { wrLoad(false); return; }
       if (e.target.id === 'sl-wr-lim-save') {
-        api('/api/waiting/extras', { method: 'POST', body: { site: site, limits: {
+        api('/api/waiting/queue', { method: 'POST', body: { site: site,
           max_concurrent: parseInt(document.getElementById('sl-wr-lim-max').value, 10) || 100,
-          session_timeout: parseInt(document.getElementById('sl-wr-lim-to').value, 10) || 3,
-          max_waiting: parseInt(document.getElementById('sl-wr-lim-wait').value, 10) || 0 } } })
+          ttl: parseInt(document.getElementById('sl-wr-lim-ttl').value, 10) || 600,
+          max_waiting: parseInt(document.getElementById('sl-wr-lim-wait').value, 10) || 200 } })
           .then(function (r) {
-            toast(r.ok ? 'Лимиты зала сохранены' : ('Ошибка: ' + (r.error || '')), !r.ok);
+            toast(r.ok ? 'Настройки очереди сохранены' : ('Ошибка: ' + (r.error || '')), !r.ok);
             if (r.ok) wrLoad(false);
           });
         return;
       }
       if (e.target.id === 'sl-wr-lim-reset') {
-        if (!window.confirm('Перезапустить модуль зала ожидания? Сайт может мигнуть 2–5 секунд.')) return;
-        api('/api/waiting/reset', { method: 'POST', body: { site: site } }).then(function (r) {
+        api('/api/waiting/queue', { method: 'POST', body: { site: site, reset: true } }).then(function (r) {
           toast(r.ok ? 'Очередь сброшена' : ('Ошибка: ' + (r.error || '')), !r.ok);
           if (r.ok) wrLoad(false);
         });
