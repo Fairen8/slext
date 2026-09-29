@@ -69,6 +69,9 @@ gh pr create --base prod --head main    # PR в prod (только из main)
 
 > Мерж в `prod` делается **merge-коммитом** (в ruleset `prod-protection` разрешён только он):
 > так история `main` становится частью `prod`, и следующие релизы не конфликтуют.
+> Иногда GitHub пишет «This branch is out-of-date» — это нормально (в `prod` есть merge-коммит,
+> которого нет в `main`): нажмите **Update branch**, либо просто мержите — строгий режим
+> проверок выключен, тесты уже прошли на голове PR.
 
 После мержа в `prod` автоматически запускается **единый пайплайн**
 `.github/workflows/pipeline.yml`:
