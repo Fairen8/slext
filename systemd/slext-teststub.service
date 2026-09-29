@@ -1,0 +1,16 @@
+[Unit]
+Description=SLExt test origin (stub для тестового контура SafeLine)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -u /opt/slext/bin/slext-teststub.py
+Restart=always
+RestartSec=3
+User=root
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/tmp
+
+[Install]
+WantedBy=multi-user.target

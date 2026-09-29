@@ -1,7 +1,7 @@
 #!/bin/bash
 # Включает нативную защиту репозитория: rulesets для main/prod + security-настройки.
-# Правила: main — рабочая ветка: PR + 1 одобрение участника (одобрение владельца не нужно);
-# prod — только из main + одобрение владельца (Approve или его merge) + обязательный чек `tests`.
+# Правила: main — рабочая ветка, прямые пуши разрешены (запрет force-push и удаления);
+# prod — только из main + подтверждение владельца (Approve или его merge) + чек `tests`.
 # Владелец (текущий gh-пользователь) получает bypass — работает напрямую при необходимости.
 # Скрипт идемпотентный: существующие rulesets обновляются, устаревшие удаляются.
 # Запуск: bash deploy/apply-github-protection.sh [owner/repo]
@@ -50,19 +50,29 @@ echo "[2/5] Rulesets (main/prod)..."
 apply_ruleset main.json
 apply_ruleset prod.json
 
-echo "[3/5] Окружение production: деплой только после подтверждения владельца"
+echo "[3/5] Окружение production: без доп. подтверждения, деплой только из ветки prod"
 ENV_TMP="$(mktemp)"
 cat > "$ENV_TMP" <<JSON
 {
   "wait_timer": 0,
-  "reviewers": [ { "type": "User", "id": $OWNER_ID } ],
-  "deployment_branch_policy": null
+  "reviewers": [],
+  "deployment_branch_policy": { "protected_branches": false, "custom_branch_policies": true }
 }
 JSON
 gh api -X PUT "repos/$REPO/environments/production" --input "$ENV_TMP" >/dev/null \
-  && echo "  + reviewers: владелец" \
+  && echo "  + подтверждение отключено (старт после tests+policy)" \
   || echo "  пропущено (нужен публичный репозиторий или GitHub Pro)"
 rm -f "$ENV_TMP"
+PROD_ID="$(gh api "repos/$REPO/environments/production" --jq .id 2>/dev/null || true)"
+if [ -n "$PROD_ID" ]; then
+  for pid in $(gh api "repos/$REPO/environments/production/deployment-branch-policies" --jq '.branch_policies[].id' 2>/dev/null); do
+    gh api -X DELETE "repos/$REPO/environments/production/deployment-branch-policies/$pid" >/dev/null 2>&1 || true
+  done
+  gh api -X POST "repos/$REPO/environments/production/deployment-branch-policies" \
+    -f name=prod -f type=branch >/dev/null 2>&1 \
+    && echo "  + деплой в окружение только из ветки prod" \
+    || echo "  политика ветки не задана (проверьте настройки окружения)"
+fi
 
 echo "[4/5] Secret scanning + push protection..."
 gh api -X PATCH "repos/$REPO" --input "$SRC/security-settings.json" >/dev/null || \

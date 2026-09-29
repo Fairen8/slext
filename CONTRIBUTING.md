@@ -6,17 +6,17 @@
 
 | Ветка | Назначение | Правила |
 |---|---|---|
-| `main` | интеграция: все фичи и фиксы | PR только для участников, 1 одобрение участника (одобрение владельца не требуется) |
-| `prod` | деплой на сервер | PR только из `main`, одобрение владельца (Approve или его merge) + обязательные тесты `tests` |
+| `main` | рабочая ветка | **прямые пуши разрешены**; PR — по желанию |
+| `prod` | деплой на сервер | PR только из `main`, подтверждение владельца (Approve или его merge) + обязательные тесты `tests` |
 | `feature/*`, `fix/*`, `docs/*` | рабочие ветки | создаются от `main`, живут до мержа |
 
 Тесты запускаются **только в прод-пути** (PR в `prod` и повторно перед деплоем): упали
 тесты — merge в `prod` заблокирован и деплой не стартует.
 
-На GitHub для веток включены нативные rulesets (после `bash deploy/apply-github-protection.sh`):
-напрямую пушить нельзя — только через PR; **одобрение владельца нужно только для `prod`**,
-в `main` мержат участники (роль write). Дополнительно CI проверяет процесс перед
-деплоем (`deploy/check-pr-approval.sh`), а `branch-guard` фиксирует нарушения issue.
+На GitHub включены rulesets (после `bash deploy/apply-github-protection.sh`): в `main` можно
+пушить напрямую (запрещены только force-push и удаление), в `prod` — только через PR из
+`main` с подтверждением владельца. Дополнительно `branch-guard` следит за пушами в `prod`
+и создаёт issue при нарушении.
 
 ## Рабочий цикл
 
@@ -31,12 +31,11 @@ python3 -m py_compile bin/*.py
 node --check www/ext.js
 
 git push -u origin feature/short-name
-gh pr create --base main --fill         # PR в main
+gh pr create --base main --fill         # PR в main (по желанию)
+# или, если уверен: git checkout main && git merge feature/short-name && git push
 ```
 
-1. Проверки запустятся при PR в `prod` (обязательный чек `tests`) — при PR в `main` CI не гоняется.
-2. Один коллега ставит approve.
-3. Squash-merge в `main`.
+Проверки запустятся при PR в `prod` (обязательный чек `tests`) — при пушах/PR в `main` CI не гоняется.
 
 ## Выкат на сервер
 
