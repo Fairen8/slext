@@ -1,0 +1,8 @@
+[Unit]
+Description=Apply SLExt injection into SafeLine panel
+After=docker.service nginx.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/slext/bin/apply-injection.sh

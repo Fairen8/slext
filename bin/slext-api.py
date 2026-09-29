@@ -235,6 +235,16 @@ def load_state():
     try:
         with open(STATE_FILE) as f:
             st = json.load(f)
+    except OSError:
+        return default_state()
+    except ValueError:
+        # повреждённый state сохраняем для разбора, но не теряем молча
+        try:
+            os.replace(STATE_FILE, STATE_FILE + '.bad')
+        except OSError:
+            pass
+        return default_state()
+    try:
         st = migrate_state(st or {})
         base = default_state()
         for k in ('notify', 'geo', 'alarm', 'syslog', 'backup', 'waiting'):
@@ -1005,33 +1015,45 @@ def notify_worker():
             tg_on = bool(tg.get('enabled') and tg.get('bot_token') and tg.get('chat_id'))
             dc_on = bool(dc.get('enabled') and dc.get('webhook'))
             if tg_on or dc_on:
-                min_risk = min(int(tg.get('min_risk', 0) or 0) if tg_on else 10,
-                               int(dc.get('min_risk', 0) or 0) if dc_on else 10)
+                tg_min = int(tg.get('min_risk', 0) or 0)
+                dc_min = int(dc.get('min_risk', 0) or 0)
                 with db() as conn, conn.cursor() as c:
                     c.execute('SELECT id, src_ip, host, url_path, attack_type, action, risk_level, country '
                               'FROM mgt_detect_log_basic WHERE id > %s ORDER BY id ASC LIMIT 10',
                               (int(tg.get('last_id', 0)),))
                     rows = c.fetchall()
                 for r in rows:
-                    sent_tg = sent_dc = False
-                    if int(r[6] or 0) >= min_risk:
-                        text = ('SafeLine: атака обнаружена\n'
-                                'IP: %s (%s)\nХост: %s\nПуть: %s\nТип: %s | action: %s | risk: %s\nВремя: %s' %
-                                (r[1], r[7] or '-', r[2], r[3],
-                                 ATTACK_TYPES.get(r[4], r[4]), ACTION_NAMES.get(r[5], r[5]), r[6],
-                                 time.strftime('%Y-%m-%d %H:%M:%S')))
-                        res = notify_send(text)
-                        sent_tg = bool(res.get('telegram'))
-                        sent_dc = bool(res.get('discord'))
-                    if (tg_on and not sent_tg) or (dc_on and not sent_dc):
+                    risk = int(r[6] or 0)
+                    want_tg = tg_on and risk >= tg_min
+                    want_dc = dc_on and risk >= dc_min
+                    if not want_tg and not want_dc:
+                        # события ниже порогов просто пропускаем (курсор двигаем,
+                        # иначе очередь уведомлений застрянет навсегда)
+                        with LOCK:
+                            STATE['notify']['telegram']['last_id'] = r[0]
+                            save_state(STATE)
+                        continue
+                    text = ('SafeLine: атака обнаружена\n'
+                            'IP: %s (%s)\nХост: %s\nПуть: %s\nТип: %s | action: %s | risk: %s\nВремя: %s' %
+                            (r[1], r[7] or '-', r[2], r[3],
+                             ATTACK_TYPES.get(r[4], r[4]), ACTION_NAMES.get(r[5], r[5]), risk,
+                             time.strftime('%Y-%m-%d %H:%M:%S')))
+                    res = {}
+                    if want_tg:
+                        res.update(notify_send(text, kind='telegram'))
+                    if want_dc:
+                        res.update(notify_send(text, kind='discord'))
+                    sent_tg = (not want_tg) or bool(res.get('telegram'))
+                    sent_dc = (not want_dc) or bool(res.get('discord'))
+                    if not sent_tg or not sent_dc:
                         break
                     now = int(time.time())
                     with LOCK:
                         STATE['notify']['telegram']['last_id'] = r[0]
-                        if sent_tg:
+                        if want_tg:
                             STATE['notify']['telegram']['last_send'] = now
                             STATE['notify']['telegram']['last_error'] = ''
-                        if sent_dc:
+                        if want_dc:
                             STATE['notify']['discord']['last_send'] = now
                             STATE['notify']['discord']['last_error'] = ''
                         save_state(STATE)
@@ -1117,6 +1139,10 @@ def do_backup():
             os.remove(tmpdb)
         except OSError:
             pass
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
     keep = clamp_int(cfg.get('keep_days'), 1, 365, 7)
     cutoff = time.time() - keep * 86400
     for fn in os.listdir(outdir):
@@ -1305,13 +1331,18 @@ def page_apply():
     for fn in sorted(os.listdir(os.path.join(NGINX_ROOT, 'sites-enabled'))):
         if fn.startswith('IF_'):
             cmd.append(os.path.join(NGINX_ROOT, 'sites-enabled', fn))
-    rc, out, err = run(cmd, timeout=60)
-    if rc != 0:
-        return False, (err or out)[:300]
-    rc, out, err = run(['docker', 'exec', 'safeline-tengine', 'nginx', '-t'], timeout=60)
-    if rc != 0:
-        return False, (err or out)[:300]
-    run(['docker', 'exec', 'safeline-tengine', 'nginx', '-s', 'reload'], timeout=60)
+    if not PATCH_LOCK.acquire(timeout=90):
+        return False, 'патч уже выполняется'
+    try:
+        rc, out, err = run(cmd, timeout=60)
+        if rc != 0:
+            return False, (err or out)[:300]
+        rc, out, err = run(['docker', 'exec', 'safeline-tengine', 'nginx', '-t'], timeout=60)
+        if rc != 0:
+            return False, (err or out)[:300]
+        run(['docker', 'exec', 'safeline-tengine', 'nginx', '-s', 'reload'], timeout=60)
+    finally:
+        PATCH_LOCK.release()
     with LOCK:
         STATE['page']['updated_at'] = int(time.time())
         save_state(STATE)
@@ -1403,7 +1434,8 @@ def site_list():
                     hosts = list(names or [])
                 sites.append({'id': sid, 'comment': comment or '', 'hosts': hosts})
     except Exception:
-        pass
+        # при сбое БД отдаём прошлый список, а не пустоту
+        return _SITE_CACHE['sites'] or []
     _SITE_CACHE['sites'] = sites
     _SITE_CACHE['at'] = now
     return sites
@@ -1447,6 +1479,7 @@ def waiting_set_enabled(site_id, enabled, token=None):
 
 MGT_CONF_CACHE = {}
 WR_OP_LOCK = threading.Lock()
+PATCH_LOCK = threading.Lock()
 WR_PATCH = {'ts': 0, 'ok': None, 'info': '', 'running': False}
 WR_SESSIONS = {}
 
@@ -1481,6 +1514,8 @@ def _wr_state_patch(host, patch):
 
 def site_patch_fast():
     """Быстрое восстановление патчей сайта после перегенерации конфига SafeLine."""
+    if not PATCH_LOCK.acquire(timeout=90):
+        return False, 'патч уже выполняется'
     try:
         sdir = os.path.join(NGINX_ROOT, 'sites-enabled')
         files = []
@@ -1517,6 +1552,8 @@ def site_patch_fast():
         return True, 'ok'
     except Exception as e:
         return False, str(e)[:300]
+    finally:
+        PATCH_LOCK.release()
 
 
 def site_patch_ensure(delay=1.2):
@@ -1552,7 +1589,11 @@ def site_markers_ok():
                 txt = open(os.path.join(sdir, fn), encoding='utf-8', errors='replace').read()
             except OSError:
                 return False
-            if 'slext-page' not in txt or 'slext-gate' not in txt:
+            # служебные сайты без backend_N (portal/auth) мы осознанно не патчим
+            if not re.search(r'proxy_pass\s+https?://backend_\d+;', txt):
+                continue
+            if ('slext-page' not in txt or 'slext-gate' not in txt
+                    or 'slext-skip' not in txt or 'slext-queue-go' not in txt):
                 return False
         return True
     except OSError:
@@ -1737,8 +1778,8 @@ def wr_apply(host, site_id, desired, source, token=None, notify_change=True):
 
 def waiting_stats(site_id, days=30):
     out = {'history': [], 'agg': {}, 'timeline': []}
-    sc = ts_scale()
-    since = int(time.time() * sc) - days * 86400 * sc
+    # mgt_wr_stat_log хранит время в секундах (не в ms, в отличие от detect-логов)
+    since = int(time.time()) - days * 86400
     try:
         with db() as conn, conn.cursor() as c:
             c.execute('SELECT id, max_concurrent, session_timeout, total_waiting, top_waiting, cur_waiting, '
@@ -2122,19 +2163,31 @@ def queue_stats(host):
 
 
 def queue_reset_state(host):
-    queue_state(host).update({'admitted': {}, 'waiting': [], 'served': 0, 'peak_waiting': 0,
-                              'started': int(time.time())})
+    queue_state(host).update({'admitted': {}, 'waiting': [], 'ips': {}, 'served': 0,
+                              'peak_waiting': 0, 'started': int(time.time())})
 
 
-def queue_try_admit(host, cfg, token):
-    """Мгновенный допуск: (ok, new_token). Токен не создаём, если не допущен."""
+def queue_try_admit(host, cfg, token, ip=''):
+    """Мгновенный допуск: (ok, new_token).
+
+    Защита от накрутки: один IP получает новый слот не чаще раза в минуту
+    (свой токен при этом всегда проходит и продлевается).
+    """
     now = time.time()
     st = queue_state(host)
     for t in [t for t, ts in st['admitted'].items() if now - ts > max(60, int(cfg['ttl']))]:
         st['admitted'].pop(t, None)
+    ips = st.setdefault('ips', {})
+    for k in [k for k, v in ips.items() if not v or v[0] not in st['admitted']]:
+        ips.pop(k, None)
     if token and token in st['admitted']:
         st['admitted'][token] = now
+        if ip:
+            ips[ip] = (token, now)
         return True, None
+    bound = ips.get(ip) if ip else None
+    if bound and now - bound[1] < 60:
+        return False, None
     if len(st['admitted']) < max(1, int(cfg['max_concurrent'])):
         new = None
         if not token:
@@ -2144,6 +2197,8 @@ def queue_try_admit(host, cfg, token):
         if token not in st['admitted']:
             st['served'] += 1
         st['admitted'][token] = now
+        if ip:
+            ips[ip] = (token, now)
         return True, new
     return False, None
 
@@ -2172,7 +2227,8 @@ def handle_queue_admit(self):
     cfg = queue_cfg(host)
     if not cfg.get('enabled'):
         return self._json(200, {'ok': True})
-    ok, new_token = queue_try_admit(host, cfg, queue_cookie_token(self))
+    ok, new_token = queue_try_admit(host, cfg, queue_cookie_token(self),
+                                    str(self.headers.get('X-Real-IP') or '').strip()[:64])
     if ok:
         extra = []
         if new_token:
@@ -2204,7 +2260,8 @@ def handle_queue_go(self):
     cfg = queue_cfg(host)
     if not cfg.get('enabled'):
         return self._redirect(to)
-    ok, new_token = queue_try_admit(host, cfg, queue_cookie_token(self))
+    ok, new_token = queue_try_admit(host, cfg, queue_cookie_token(self),
+                                    str(self.headers.get('X-Real-IP') or '').strip()[:64])
     if not ok:
         return self._redirect('/@slext-queue?to=' + urllib.parse.quote(to, safe=''))
     extra = []
@@ -2351,6 +2408,8 @@ def queue_status(host, token):
 
 def queue_patch_reload():
     """Перезаписать конфиги сайтов (гейт очереди живёт в них) и перезагрузить nginx."""
+    if not PATCH_LOCK.acquire(timeout=90):
+        return False
     try:
         sdir = os.path.join(NGINX_ROOT, 'sites-enabled')
         files = []
@@ -2367,6 +2426,8 @@ def queue_patch_reload():
         return True
     except Exception:
         return False
+    finally:
+        PATCH_LOCK.release()
 
 
 def queue_apply(host, enabled=None, max_concurrent=None, ttl=None, max_waiting=None):
@@ -2468,17 +2529,26 @@ def real_rate_pm(window):
     count = 0
     for path in reversed(files):
         if path.endswith('.gz'):
+            # gz читается с начала; решаем по последней строке, накрывает ли файл окно
+            last_ts = 0
             try:
                 with gzip.open(path, 'rt', errors='replace') as fh:
                     for line in fh:
-                        old, hit = _rate_count_line(line, since)
-                        if old:
-                            break
-                        if hit:
-                            count += 1
+                        m = PIPE_RE.match(line) or MAIN_RE.match(line)
+                        if not m:
+                            continue
+                        ts = parse_ts(m.group('ts'))
+                        if ts:
+                            last_ts = ts
+                        if ts and ts >= since:
+                            _old, hit = _rate_count_line(line, since)
+                            if hit:
+                                count += 1
             except OSError:
                 continue
-            break
+            if last_ts and last_ts < since:
+                break
+            continue
         n, covered = _rate_scan_file(path, since)
         count += n
         if covered:
@@ -2620,9 +2690,12 @@ LOADTEST_UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
 
 def lt_origin_target(host, path):
     up_host, up_port = '', 0
+    site = site_by_host(host) or {}
+    sid = int(site.get('id') or 1)
     try:
-        txt = open('/data/safeline/resources/nginx/sites-enabled/IF_backend_1', errors='replace').read()
-        m = re.search(r'upstream\s+backend_1\s*\{(.*?)\}', txt, re.S)
+        fpath = '/data/safeline/resources/nginx/sites-enabled/IF_backend_%d' % sid
+        txt = open(fpath, errors='replace').read()
+        m = re.search(r'upstream\s+backend_%d\s*\{(.*?)\}' % sid, txt, re.S)
         if m:
             m2 = re.search(r'server\s+([A-Za-z0-9_.\-]+)(?::(\d+))?', m.group(1))
             if m2:
@@ -2842,11 +2915,13 @@ def lt_analyze(stages, stable, peak, p95_ms, err_pct, reason):
     return out
 
 
-def lt_pause_protection():
+def lt_pause_protection(site_id=0):
     snap = {'acl': [], 'cs_bouncer': False}
     try:
         with db() as conn, conn.cursor() as c:
-            c.execute("SELECT id, enabled FROM mgt_acl_config_v3 WHERE built_in = true AND site_id IN (0, 1)")
+            c.execute("SELECT id, enabled FROM mgt_acl_config_v3 "
+                      "WHERE built_in = true AND site_id IN (0, %s)",
+                      (int(site_id or 0),))
             snap['acl'] = [[rid, bool(en)] for rid, en in c.fetchall()]
             if snap['acl']:
                 c.execute('UPDATE mgt_acl_config_v3 SET enabled = false WHERE id = ANY(%s)',
@@ -2930,7 +3005,8 @@ def loadtest_run(job_id, ev):
         max_total = int(p.get('max_total_sec') or 240)
         mode = p.get('mode') or 'origin'
         if mode == 'waf' and p.get('auto_pause'):
-            paused = lt_pause_protection()
+            site = site_by_host(host) or {}
+            paused = lt_pause_protection(site.get('id') or 0)
             with LOCK:
                 jj = STATE.get('loadtest') or {}
                 if jj.get('id') == job_id:
@@ -3564,7 +3640,6 @@ PERM_POST = {
     '/api/waiting/queue': 'wr.control',
     '/api/waiting/extras': 'wr.settings',
     '/api/waiting/page': 'wr.settings',
-    '/api/waiting/reset': 'wr.control',
     '/api/loadtest/start': 'lt.run',
     '/api/loadtest/stop': 'lt.run',
     '/api/loadtest/apply': 'lt.apply',
@@ -3741,6 +3816,18 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        try:
+            return self._do_GET()
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        except Exception as e:
+            print('[api] GET %s error: %s' % (self.path.split('?')[0][:120], str(e)[:200]), flush=True)
+            try:
+                return self._json(500, {'ok': False, 'error': 'internal error'})
+            except Exception:
+                return
+
+    def _do_GET(self):
         u = urllib.parse.urlparse(self.path)
         qs = urllib.parse.parse_qs(u.query)
         if u.path == '/api/health':
@@ -3947,9 +4034,6 @@ class H(BaseHTTPRequestHandler):
         if u.path == '/api/notify':
             with LOCK:
                 return self._json(200, {'ok': True, 'notify': STATE['notify']})
-        if u.path == '/api/telegram':
-            with LOCK:
-                return self._json(200, {'ok': True, 'telegram': STATE['notify']['telegram']})
         if u.path == '/api/geo':
             countries = load_countries()
             selected = [c.upper() for c in (STATE['geo'].get('countries') or [])]
@@ -3993,6 +4077,18 @@ class H(BaseHTTPRequestHandler):
         return self._json(404, {'ok': False, 'error': 'not found'})
 
     def do_POST(self):
+        try:
+            return self._do_POST()
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        except Exception as e:
+            print('[api] POST %s error: %s' % (self.path.split('?')[0][:120], str(e)[:200]), flush=True)
+            try:
+                return self._json(500, {'ok': False, 'error': 'internal error'})
+            except Exception:
+                return
+
+    def _do_POST(self):
         u = urllib.parse.urlparse(self.path)
         body = self._body()
         if u.path == '/api/session/verify':
@@ -4001,7 +4097,7 @@ class H(BaseHTTPRequestHandler):
             return self._json(401, {'ok': False, 'error': 'unauthorized'})
         if u.path in PERM_POST and not self._need(PERM_POST[u.path]):
             return self._json(403, {'ok': False, 'error': 'нет доступа: ' + PERM_POST[u.path]})
-        if u.path in ('/api/access', '/api/access/save') and self._user()['role'] != 'admin':
+        if u.path.startswith('/api/access') and self._user()['role'] != 'admin':
             return self._json(403, {'ok': False, 'error': 'управление доступом — только администратор'})
         if u.path == '/api/access/save':
             uname = str(body.get('username') or '')[:100]
@@ -4147,17 +4243,10 @@ class H(BaseHTTPRequestHandler):
                                 pass
                 save_state(STATE)
             return self._json(200, {'ok': True, 'notify': STATE['notify']})
-        if u.path == '/api/telegram':
-            tg = body.get('telegram') or {}
-            return self.do_POST_notify_legacy(tg)
         if u.path == '/api/notify/test':
             ch = str(body.get('channel') or 'all')
             res = notify_send('SLExt: тестовое уведомление SafeLine работает.', kind=ch)
             ok = any(res.values()) if res else False
-            return self._json(200 if ok else 400, {'ok': ok, 'results': res})
-        if u.path == '/api/telegram/test':
-            res = notify_send('SLExt: тестовое уведомление SafeLine работает.', kind='telegram')
-            ok = bool(res.get('telegram'))
             return self._json(200 if ok else 400, {'ok': ok, 'results': res})
         if u.path == '/api/geo':
             geo = body.get('geo') or {}
@@ -4331,15 +4420,6 @@ class H(BaseHTTPRequestHandler):
                                        'changed_at': ts, 'manual_at': ts, 'error': '', 'error_at': 0})
             queue_write_page()
             return self._json(200, {'ok': True, 'queue': q, 'stats': queue_stats(host)})
-        if u.path == '/api/waiting/reset':
-            host = str(body.get('site') or '')[:200]
-            if not self._host_ok(host):
-                return self._json(403, {'ok': False, 'error': 'нет доступа к домену ' + host})
-            # сброс очереди SafeLine (модуль) — редко нужен; наш зал сбрасывается через /api/waiting/queue
-            run(['docker', 'restart', 'safeline-tengine'], timeout=120)
-            time.sleep(7)
-            mgt_conf_forget(1)
-            return self._json(200, {'ok': True, 'info': 'модуль зала SafeLine перезапущен', 'mgt': waiting_conf(1)})
         if u.path == '/api/waiting/page':
             host = str(body.get('site') or '')[:200]
             if not self._host_ok(host):
@@ -4426,8 +4506,9 @@ class H(BaseHTTPRequestHandler):
             if not lim_ok:
                 return self._json(400, {'ok': False, 'error': 'лимиты: ' + (lim_err or ''),
                                         'cfg': waiting_cfg(host)})
+            _site = site_by_host(host)
             return self._json(200, {'ok': True, 'cfg': waiting_cfg(host),
-                                    'mgt': waiting_conf(1)})
+                                    'mgt': waiting_conf(_site['id']) if _site else {}})
         if u.path == '/api/dns/check':
             host = str(body.get('host') or '')[:200]
             hosts = [host] if host else []
@@ -4541,26 +4622,6 @@ class H(BaseHTTPRequestHandler):
             ok, info = crowdsec_unban(body.get('ip'))
             return self._json(200 if ok else 400, {'ok': ok, 'info': info})
         return self._json(404, {'ok': False, 'error': 'not found'})
-
-    def do_POST_notify_legacy(self, tg):
-        with LOCK:
-            cur = STATE['notify']['telegram']
-            for k in ('enabled', 'bot_token', 'chat_id', 'min_risk'):
-                if k in tg:
-                    cur[k] = tg[k]
-            cur['enabled'] = bool(cur.get('enabled'))
-            cur['min_risk'] = int(cur.get('min_risk', 0) or 0)
-            if not cur.get('bot_token') or not cur.get('chat_id'):
-                cur['enabled'] = False
-            if int(cur.get('last_id', 0)) == 0:
-                try:
-                    with db() as conn, conn.cursor() as c:
-                        c.execute('SELECT COALESCE(MAX(id), 0) FROM mgt_detect_log_basic')
-                        cur['last_id'] = c.fetchone()[0]
-                except Exception:
-                    pass
-            save_state(STATE)
-        return self._json(200, {'ok': True, 'telegram': STATE['notify']['telegram']})
 
 
 SKIP_CONF = '/data/safeline/resources/nginx/conf.d/zz_slext_skip.conf'

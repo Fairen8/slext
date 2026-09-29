@@ -75,8 +75,8 @@ def skip_loc(scheme, n):
             '        proxy_set_header Accept-Encoding ""; # slext-enc-pipeline\n'
             '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n'
             '%s'
-            '        t1k_add_user_data "1";\n'
-            '        tx_add_user_data "1";\n'
+            '        t1k_add_user_data "%d";\n'
+            '        tx_add_user_data "%d";\n'
             '        t1k_body_size 1024k;\n'
             '        tx_body_size 4k;\n'
             '        t1k_error_page 403 /.safeline/forbidden_page;\n'
@@ -84,7 +84,7 @@ def skip_loc(scheme, n):
             '        t1k_error_page 466 /.safeline/offline_page;\n'
             '        tx_error_page 403 /.safeline/forbidden_page;\n'
             '        t1k_error_page 465 /.safeline/waiting_room_page;\n'
-            '    }\n') % (scheme or 'https', n or 1, custom)
+            '    }\n') % (scheme or 'https', n or 1, custom, n or 1, n or 1)
 
 
 PX_MARK = '# slext-px-access'
@@ -236,10 +236,12 @@ def patch_skip(text):
             block = mm.group(0)
             fixed = re.sub(r'proxy_pass\s+https?://backend_\d+\$request_uri;',
                            'proxy_pass %s://backend_%d$request_uri;' % (scheme, n), block)
-            fixed = re.sub(r'include /etc/nginx/custom_params/backend_\d+;\n',
+            fixed = re.sub(r'^[ \t]*include /etc/nginx/custom_params/backend_\d+;[ \t]*\n',
                            ('        include /etc/nginx/custom_params/backend_%d;\n' % n
                             if os.path.exists('%s/backend_%d' % (CUSTOM_PARAMS_DIR, n)) else ''),
-                           fixed)
+                           fixed, flags=re.M)
+            fixed = re.sub(r't1k_add_user_data "\d+";', 't1k_add_user_data "%d";' % n, fixed)
+            fixed = re.sub(r'tx_add_user_data "\d+";', 'tx_add_user_data "%d";' % n, fixed)
             if fixed != block:
                 text = text[:mm.start()] + fixed + text[mm.end():]
                 changed = True
@@ -375,6 +377,14 @@ def strip_slext(text):
     return text, text != orig
 
 
+def _write_text(path, text):
+    """Атомарная запись (tmp+rename): параллельные патчи не рвут конфиг."""
+    tmp = path + '.slext-tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
 def patch(path, files):
     try:
         with open(path, encoding='utf-8') as f:
@@ -386,8 +396,10 @@ def patch(path, files):
     if not scheme0:
         text2, changed2 = strip_slext(text)
         if changed2:
-            with open(path, 'w', encoding='utf-8') as f:
-                f.write(text2)
+            try:
+                _write_text(path, text2)
+            except OSError:
+                return False
         return changed2
     changed = False
     for fname, loc in PAGES:
@@ -462,8 +474,7 @@ def patch(path, files):
     text, ch = patch_px_log(text)
     changed = changed or ch
     if changed:
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(text)
+        _write_text(path, text)
     return changed
 
 
