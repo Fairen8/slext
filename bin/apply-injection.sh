@@ -19,7 +19,7 @@ if ! docker exec safeline-mgt grep -q slext-injected /app/static/index.html; the
   echo "slext-injection-applied"
 fi
 EXTV="$(cat /opt/slext/conf/extver 2>/dev/null || echo 50)"
-docker exec safeline-mgt sed -i -E 's|href="/ext/ext\.css(\?v=[0-9]+)?"|href="/ext/ext.css?v='"$EXTV"'"|; s|src="/ext/ext\.js(\?v=[0-9]+)?" defer|src="/ext/ext.js?v='"$EXTV"'" defer|' /app/static/index.html || true
+docker exec safeline-mgt sed -i -E 's|href="/ext/ext\.css(\?v=[0-9]*)?|href="/ext/ext.css?v='"$EXTV"'|; s|src="/ext/ext\.js(\?v=[0-9]*)?|src="/ext/ext.js?v='"$EXTV"'|' /app/static/index.html || true
 
 GW=$(docker network inspect safeline-ce -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null)
 [ -z "$GW" ] && GW=192.168.0.1
@@ -43,11 +43,6 @@ rm -f /tmp/slext-def.conf /tmp/slext-def-patched.conf
 LOGCONF=/data/safeline/resources/nginx/conf.d/zz_slext_access_log.conf
 if [ ! -f "$LOGCONF" ]; then
   printf 'access_log /var/log/nginx/access.log safeline;\n' > "$LOGCONF"
-fi
-
-QMAP=/data/safeline/resources/nginx/conf.d/zz_slext_queue.conf
-if [ ! -f "$QMAP" ]; then
-  printf '# slext-queue map (managed by SLExt API)\nmap $host $slext_queue_on {\n    default 0;\n}\nmap $cookie_slext_q $slext_queue_np {\n    default 1;\n    "~." 0;\n}\nmap "$slext_queue_on$slext_queue_np" $slext_queue_on0 {\n    "11" 1;\n    default 0;\n}\nmap "$slext_queue_on0$request_uri" $slext_queue_gate {\n    "~^1/(@slext-queue|\\.safeline/)" 0;\n    "~^1" 1;\n    default 0;\n}\n' > "$QMAP"
 fi
 
 mkdir -p /data/safeline/resources/nginx/slext-geo /data/safeline/resources/nginx/slext-pages
@@ -81,6 +76,42 @@ if [ ! -f "$CCMAP" ] || ! grep -q 'slext_cc' "$CCMAP" 2>/dev/null; then
 fi
 
 CHANGED=0
+# map-гейт зала: создаём дефолтный (пустой), API дальше сам обновляет список сайтов
+QMAP=/data/safeline/resources/nginx/conf.d/zz_slext_queue.conf
+if [ ! -f "$QMAP" ] || ! grep -q 'slext_q_on' "$QMAP" 2>/dev/null; then
+  cat > "$QMAP" <<'SLQMAP'
+# slext-queue map (managed by SLExt API)
+map $host $slext_q_on {
+    default 0;
+}
+map $cookie_slext_q $slext_q_c {
+    default 0;
+    "" 1;
+}
+map $http_accept $slext_q_h {
+    default 0;
+    "~*text/html" 1;
+}
+map "$slext_q_on$slext_q_c$slext_q_h" $slext_q_pre {
+    "111" 1;
+    default 0;
+}
+map "$slext_q_pre$request_uri" $slext_q_pre2 {
+    default 0;
+    "~^1/(@slext-queue|\.safeline/)" 0;
+    "~^1" 1;
+}
+map $arg_slgo $slext_q_l {
+    default 0;
+    "1" 1;
+}
+map "$slext_q_pre2$slext_q_l" $slext_queue_go {
+    "10" 1;
+    default 0;
+}
+SLQMAP
+  CHANGED=1
+fi
 BACKUP_DIR=/opt/slext/backups/nginx
 mkdir -p "$BACKUP_DIR"
 

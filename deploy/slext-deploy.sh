@@ -28,6 +28,12 @@ for d in bin www conf systemd; do
   if [ -f /opt/slext/conf/state.json ] && [ "$d" = "conf" ]; then
     cp -a /opt/slext/conf/state.json /opt/slext.old/conf-state.json 2>/dev/null || true
   fi
+  if [ -f /opt/slext/conf/lb-upstreams.conf ] && [ "$d" = "conf" ]; then
+    cp -a /opt/slext/conf/lb-upstreams.conf /opt/slext.old/conf-lb-upstreams.conf 2>/dev/null || true
+  fi
+  if [ -d /opt/slext/conf/geo ] && [ "$d" = "conf" ]; then
+    cp -a /opt/slext/conf/geo /opt/slext.old/conf-geo 2>/dev/null || true
+  fi
   rm -rf "/opt/slext/$d"
   cp -a "$SRC/$d" "/opt/slext/"
 done
@@ -41,7 +47,14 @@ fi
 if [ ! -f /opt/slext/conf/state.json ] && [ -f /opt/slext.old/conf-state.json ]; then
   cp -a /opt/slext.old/conf-state.json /opt/slext/conf/state.json
 fi
-rm -f /opt/slext.old/conf-slext.env /opt/slext.old/conf-state.json
+if [ -f /opt/slext.old/conf-lb-upstreams.conf ]; then
+  cp -a /opt/slext.old/conf-lb-upstreams.conf /opt/slext/conf/lb-upstreams.conf
+fi
+if [ -d /opt/slext.old/conf-geo ]; then
+  cp -a /opt/slext.old/conf-geo /opt/slext/conf/geo
+fi
+rm -rf /opt/slext.old/conf-slext.env /opt/slext.old/conf-state.json \
+       /opt/slext.old/conf-lb-upstreams.conf /opt/slext.old/conf-geo
 
 # 3. Зависимости
 if ! python3 -c 'import psycopg2' >/dev/null 2>&1; then

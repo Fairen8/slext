@@ -35,7 +35,7 @@ PGDATABASE=safeline-ce
 | `syslog` | syslog: адрес, порт, протокол |
 | `backup` | бэкапы: включение, час, срок хранения, список файлов |
 | `geo` | гео-блокировка: enabled, mode (block/allow), страны, last_error |
-| `page` | страницы ошибок: enabled, brand, color, тексты по кодам |
+| `page` | страницы ошибок: enabled, brand, тексты по кодам (палитра NRG / INDEX фиксирована) |
 | `lb` | балансировщик: алгоритм, узлы, health-check, таймауты |
 | `skip` | `{enabled: bool}` — skip decryption |
 | `waiting` | зал: sites → {page, schedule, auto, notify, state, auto_run, auto_log} |

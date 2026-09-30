@@ -41,6 +41,9 @@ jobs:
       - name: Тесты политики зала ожидания
         run: python3 tests/wr_policy_test.py
 
+      - name: Тесты публичных страниц
+        run: python3 tests/pages_test.py
+
       - name: Синтаксис JavaScript
         run: node --check www/ext.js
 

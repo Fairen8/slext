@@ -2,7 +2,7 @@
   'use strict';
 
   var API = location.origin + '/extapi';
-  var EXTVER = '51';
+  var EXTVER = '53';
 
   function tok() {
     try { return localStorage.getItem('safeline_auth') || ''; } catch (e) { return ''; }
@@ -1284,10 +1284,9 @@
       }).join('');
       var card = el('<div class="sl-card" id="sl-page-sec">' +
         '<div class="sl-card-title">Страницы ошибок <span class="sl-badge">SLExt</span></div>' +
-        '<div class="sl-hint">Заменяют стандартные страницы SafeLine (403 · 404 · 429 · 465 · 466 · 502 · 504) на свои и работают вместо заблокированного раздела Blocking Pages → Custom HTML. Применяется ко всем сайтам.</div>' +
+        '<div class="sl-hint">Заменяют стандартные страницы SafeLine (403 · 404 · 429 · 465 · 466 · 502 · 504) на свои и работают вместо заблокированного раздела Blocking Pages → Custom HTML. Оформление — в стиле NRG / INDEX, палитра фиксирована. Применяется ко всем сайтам.</div>' +
         '<div class="sl-row"><label><input type="checkbox" id="sl-pg-en"' + (p.enabled ? ' checked' : '') + '> включено</label>' +
-        '<label>Бренд</label><input class="sl-input" id="sl-pg-brand" value="' + esc(p.brand) + '">' +
-        '<label>Цвет</label><input class="sl-input sl-w" id="sl-pg-color" value="' + esc(p.color) + '" placeholder="по коду страницы"></div>' +
+        '<label>Бренд</label><input class="sl-input" id="sl-pg-brand" value="' + esc(p.brand) + '"></div>' +
         '<table class="sl-table"><tr><th>Вкл</th><th>Код</th><th>Заголовок</th><th>Текст</th><th></th></tr>' + rows + '</table>' +
         '<div class="sl-row"><button class="sl-btn sl-btn-pri" id="sl-pg-save">Сохранить и применить</button></div></div>');
       host.appendChild(card);
@@ -1321,7 +1320,6 @@
       return {
         enabled: !!((document.getElementById('sl-pg-en') || {}).checked),
         brand: ((document.getElementById('sl-pg-brand') || {}).value || 'SafeLine'),
-        color: (((document.getElementById('sl-pg-color') || {}).value || '').trim()),
         pages: pages
       };
     }
@@ -1608,12 +1606,12 @@
       '<div class="sl-row"><label><input type="checkbox" id="sl-wr-nf"' + (nf.enabled ? ' checked' : '') + '> уведомления</label></div>' +
       '<div class="sl-row"><button class="sl-btn sl-btn-pri" id="sl-wr-save-ext">Сохранить автоматизацию</button></div></details>' +
       '<details class="sl-details"><summary>Страница очереди: тексты и стиль</summary>' +
+      '<div class="sl-hint">Оформление — в стиле NRG / INDEX, палитра фиксирована.</div>' +
       '<div class="sl-row"><label>Заголовок</label><input class="sl-input sl-wide" id="sl-wr-p-title" value="' + esc(page.title) + '"></div>' +
       '<div class="sl-row"><label>Текст</label><input class="sl-input sl-wide" id="sl-wr-p-msg" value="' + esc(page.message) + '"></div>' +
       '<div class="sl-row"><label>Заметка</label><input class="sl-input sl-wide" id="sl-wr-p-note" value="' + esc(page.note) + '"></div>' +
       '<div class="sl-row"><label>Подпись счёта</label><input class="sl-input" id="sl-wr-p-post" value="' + esc(page.posttext) + '">' +
       '<label>Бренд</label><input class="sl-input" id="sl-wr-p-brand" value="' + esc(page.brand) + '">' +
-      '<label>Цвет</label><input class="sl-input sl-w" id="sl-wr-p-color" value="' + esc(page.color) + '">' +
       '<label><input type="checkbox" id="sl-wr-p-stats"' + (page.show_stats !== false ? ' checked' : '') + '> статистика на странице</label></div>' +
       '<div class="sl-row"><button class="sl-btn sl-btn-pri" id="sl-wr-p-save">Сохранить страницу</button>' +
       '<button class="sl-btn" id="sl-wr-p-preview">Превью</button></div></details>' +
@@ -1704,7 +1702,6 @@
           note: document.getElementById('sl-wr-p-note').value,
           posttext: document.getElementById('sl-wr-p-post').value,
           brand: document.getElementById('sl-wr-p-brand').value,
-          color: document.getElementById('sl-wr-p-color').value,
           show_stats: document.getElementById('sl-wr-p-stats').checked
         } };
         if (e.target.id === 'sl-wr-p-preview') {
