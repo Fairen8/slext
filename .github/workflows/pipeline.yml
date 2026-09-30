@@ -127,13 +127,17 @@ jobs:
 
       - name: Выгрузка репозитория на сервер (staging, tar-over-ssh)
         run: |
+          set -euo pipefail
           tar --exclude=.git -czf - . | \
-            ssh -i ~/.ssh/id -p "${{ secrets.SSH_PORT }}" -o StrictHostKeyChecking=accept-new \
+            ssh -i ~/.ssh/id -p "${{ secrets.SSH_PORT }}" \
+            -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 \
             "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
             "rm -rf /tmp/slext-stage && mkdir -p /tmp/slext-stage && tar -xzf - -C /tmp/slext-stage"
 
-      - name: Применение на сервере (идемпотентно, с бэкапом)
+      - name: Применение на сервере (идемпотентно, с бэкапом и откатом)
         run: |
-          ssh -i ~/.ssh/id -p "${{ secrets.SSH_PORT }}" \
+          set -euo pipefail
+          timeout 900 ssh -i ~/.ssh/id -p "${{ secrets.SSH_PORT }}" \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
             "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
             "sudo -n /usr/local/bin/slext-deploy"

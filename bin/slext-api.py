@@ -4864,12 +4864,19 @@ class S(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
-def main():
+def _startup_skip():
     try:
         with LOCK:
             skip_apply(bool((STATE.get('skip') or {}).get('enabled', True)))
     except Exception:
         pass
+
+
+def main():
+    # важно: HTTP-сокеты поднимаем сразу (skip_apply делает nginx -t/reload
+    # и может занимать секунды — из-за этого деплой-чек здоровья ловил
+    # "connection refused"). Служебные задачи — только в фоне.
+    threading.Thread(target=_startup_skip, daemon=True).start()
     threading.Thread(target=notify_worker, daemon=True).start()
     threading.Thread(target=lb_worker, daemon=True).start()
     threading.Thread(target=alarm_worker, daemon=True).start()
