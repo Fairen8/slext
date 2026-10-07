@@ -2,7 +2,7 @@
   'use strict';
 
   var API = location.origin + '/extapi';
-  var EXTVER = '54';
+  var EXTVER = '55';
 
   function tok() {
     try { return localStorage.getItem('safeline_auth') || ''; } catch (e) { return ''; }
@@ -187,7 +187,7 @@
   }
 
   function slApplyAccess() {
-    var btns = document.querySelectorAll('#sl-app-nav .sl-navbtn');
+    var btns = document.querySelectorAll('#sl-subnav .sl-subnavbtn');
     var first = null, i;
     for (i = 0; i < btns.length; i++) {
       var tab = btns[i].getAttribute('data-tab');
@@ -198,16 +198,16 @@
       if (ok && !first) first = tab;
     }
     // скрываем заголовки групп, в которых не осталось доступных разделов
-    var groups = document.querySelectorAll('#sl-app-nav .sl-nav-group');
+    var groups = document.querySelectorAll('#sl-subnav .sl-nav-group');
     for (i = 0; i < groups.length; i++) {
       var n = groups[i].nextElementSibling, any = false;
       while (n && !n.classList.contains('sl-nav-group')) {
-        if (n.classList.contains('sl-navbtn') && n.style.display !== 'none') any = true;
+        if (n.classList.contains('sl-subnavbtn') && n.style.display !== 'none') any = true;
         n = n.nextElementSibling;
       }
       groups[i].style.display = any ? '' : 'none';
     }
-    var cur = document.querySelector('#sl-app-nav .sl-navbtn[data-tab="' + SL_TAB + '"]');
+    var cur = document.querySelector('#sl-subnav .sl-subnavbtn[data-tab="' + SL_TAB + '"]');
     if (cur && cur.style.display === 'none' && first) slSetTab(first, true);
     var chip = document.getElementById('sl-app-user');
     if (chip && SL_ME) {
@@ -259,54 +259,68 @@
     li.addEventListener('click', function () { slOpen(); });
   }
 
-  function ensureApp() {
-    var a = document.getElementById('sl-app');
-    if (a) { slNav(); return a; }
-    if (location.pathname.indexOf('/login') === 0) return null;
-    var nav = SL_GROUPS.map(function (g) {
-      return '<div class="sl-nav-group">' + esc(g.title) + '</div>' +
+  /* Под-навигация SLExt в родном drawer (группы + разделы) */
+  function slSubnav() {
+    var item = document.getElementById('sl-nav-item');
+    var old = document.getElementById('sl-subnav');
+    if (!slWorkOpen() || !item || !document.body.contains(item)) {
+      if (old) old.remove();
+      return;
+    }
+    if (old && old.previousElementSibling === item) { slSubnavState(); return; }
+    if (old) old.remove();
+    var html = SL_GROUPS.map(function (g) {
+      return '<div class="sl-nav-group sl-subgroup">' + esc(g.title) + '</div>' +
         g.items.map(function (t) {
           var icon = SL_ICONS[t[0]] || '';
-          return '<button class="sl-navbtn" data-tab="' + t[0] + '" title="' + esc(t[1]) + '">' +
+          return '<button class="sl-subnavbtn" data-tab="' + t[0] + '" title="' + esc(t[1]) + '">' +
             '<span class="sl-nav-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + icon + '"/></svg></span>' +
             '<span class="sl-nav-t">' + esc(t[1]) + '</span>' +
             (t[0] === 'wr' ? '<span class="sl-nav-dot" id="sl-nav-dot-wr"></span>' : '') +
             '</button>';
         }).join('');
     }).join('');
+    var box = el('<div id="sl-subnav">' + html + '</div>');
+    item.parentElement.insertBefore(box, item.nextSibling);
+    box.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-tab]');
+      if (b) slSetTab(b.getAttribute('data-tab'));
+    });
+    slSubnavState();
+    slApplyAccess();
+  }
+
+  function slSubnavState() {
+    var btns = document.querySelectorAll('#sl-subnav .sl-subnavbtn');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].classList.toggle('on', btns[i].getAttribute('data-tab') === SL_TAB);
+    }
+  }
+
+  function ensureApp() {
+    var a = document.getElementById('sl-app');
+    if (a) { slNav(); return a; }
+    if (location.pathname.indexOf('/login') === 0) return null;
     var panes = SL_TABS.map(function (t) {
       return '<div class="sl-tabpane" id="sl-tab-' + t[0] + '"></div>';
     }).join('');
     a = el('<div id="sl-app">' +
-      '<div id="sl-app-scrim"></div>' +
-      '<aside id="sl-app-side">' +
-      '<div class="sl-side-head">' +
-      '<span class="sl-logo"><span class="sl-logo-mark">SL</span>SLExt</span>' +
-      '<span class="sl-ver" id="sl-app-ver">v54</span>' +
-      '<button id="sl-side-close" class="sl-iconbtn" title="Свернуть меню" aria-label="Свернуть меню">' +
-      '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>' +
-      '</button></div>' +
-      '<nav id="sl-app-nav">' + nav + '</nav>' +
-      '<div class="sl-side-foot">' +
-      '<div class="sl-chip-stat" id="sl-chip-wr" title="Зал ожидания"><i></i><span>зал: —</span></div>' +
-      '<div class="sl-chip-stat" id="sl-chip-skip" title="Skip decryption"><i></i><span>skip: —</span></div>' +
-      '</div></aside>' +
-      '<div id="sl-app-main">' +
       '<header id="sl-app-head">' +
-      '<button id="sl-burger" class="sl-iconbtn" title="Меню" aria-label="Меню">' +
-      '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z"/></svg></button>' +
       '<div class="sl-crumbs"><span class="sl-crumb">SLExt</span>' +
       '<span class="sl-crumb-sep">/</span>' +
       '<span class="sl-tabname" id="sl-app-tab-name">Дашборд</span></div>' +
       '<span class="sl-badge" id="sl-app-user"></span>' +
-      '<span class="sl-hint" id="sl-app-status"></span>' +
+      '<div class="sl-head-chips">' +
+      '<div class="sl-chip-stat" id="sl-chip-wr" title="Зал ожидания"><i></i><span>зал: —</span></div>' +
+      '<div class="sl-chip-stat" id="sl-chip-skip" title="Skip decryption"><i></i><span>skip: —</span></div>' +
+      '</div>' +
       '<button id="sl-app-refresh" class="sl-iconbtn" title="Обновить раздел" aria-label="Обновить">' +
       '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>' +
-      '<button id="sl-app-close" class="sl-iconbtn" title="Закрыть" aria-label="Закрыть">' +
+      '<button id="sl-app-close" class="sl-iconbtn" title="Закрыть SLExt" aria-label="Закрыть">' +
       '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">' +
       '<path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>' +
       '</svg></button></header>' +
-      '<div id="sl-app-body">' + panes + '</div></div></div>');
+      '<div id="sl-app-body">' + panes + '</div></div>');
     document.body.appendChild(a);
     a.querySelector('#sl-app-close').addEventListener('click', function () { slClose(); });
     a.querySelector('#sl-app-refresh').addEventListener('click', function () {
@@ -314,20 +328,12 @@
       slStatus();
       toast('Обновлено');
     });
-    a.querySelector('#sl-app-nav').addEventListener('click', function (e) {
-      var b = e.target.closest('[data-tab]');
-      if (b) {
-        slSetTab(b.getAttribute('data-tab'));
-        a.classList.remove('sl-side-open');
-      }
-    });
-    a.querySelector('#sl-burger').addEventListener('click', function () { a.classList.toggle('sl-side-open'); });
-    a.querySelector('#sl-side-close').addEventListener('click', function () { a.classList.remove('sl-side-open'); });
-    a.querySelector('#sl-app-scrim').addEventListener('click', function () { a.classList.remove('sl-side-open'); });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') slClose(); });
     tipInit();
     document.addEventListener('click', function (e) {
       if (!slWorkOpen()) return;
+      var sub = document.getElementById('sl-subnav');
+      if (sub && sub.contains(e.target)) return;
       var nav = document.getElementById('sl-nav-item');
       if (nav && nav.contains(e.target)) return;
       var paper = document.querySelector('.MuiDrawer-paper');
@@ -363,10 +369,7 @@
   function slSetTab(tab, silent) {
     SL_TAB = tab || 'overview';
     try { localStorage.setItem('slext_tab', SL_TAB); } catch (e) {}
-    var btns = document.querySelectorAll('#sl-app-nav .sl-navbtn');
-    for (var i = 0; i < btns.length; i++) {
-      btns[i].classList.toggle('on', btns[i].getAttribute('data-tab') === SL_TAB);
-    }
+    slSubnavState();
     var nameEl = document.getElementById('sl-app-tab-name');
     if (nameEl) for (var k = 0; k < SL_TABS.length; k++) if (SL_TABS[k][0] === SL_TAB) { nameEl.textContent = SL_TABS[k][1]; break; }
     var panes = document.querySelectorAll('#sl-app .sl-tabpane');
@@ -392,6 +395,7 @@
     if (nav) nav.classList.add('active');
     slUnselOthers(true);
     slSetTab(SL_TAB, true);
+    slSubnav();
     renderWorkspaceTab();
     slStatus();
     slLoadMe();
@@ -403,18 +407,15 @@
     try { localStorage.setItem('slext_app', '0'); } catch (e) {}
     var nav = document.getElementById('sl-nav-item');
     if (nav) nav.classList.remove('active');
+    var sub = document.getElementById('sl-subnav');
+    if (sub) sub.remove();
     slUnselOthers(false);
   }
 
   function slStatus() {
-    var elx = document.getElementById('sl-app-status');
     Promise.all([api('/api/waiting'), api('/api/skip')]).then(function (r) {
       var wr = !!(r[0] && r[0].ok && r[0].mgt && r[0].mgt.is_enabled);
       var sk = !!(r[1] && r[1].ok && r[1].skip && r[1].skip.enabled);
-      if (elx) {
-        elx.textContent = 'зал ожидания: ' + (wr ? 'включён' : 'выключен') +
-          ' · skip decryption: ' + (sk ? 'вкл' : 'выкл');
-      }
       var cw = document.getElementById('sl-chip-wr');
       if (cw) {
         cw.className = 'sl-chip-stat ' + (wr ? 'is-on' : 'is-off');
@@ -3139,6 +3140,7 @@
     fixDashError(document);
     renderAccessSettings();
     if (slWorkOpen()) {
+      slSubnav();
       renderWorkspaceTab();
       if (SL_TAB === 'lt') ltPoll();
     }
