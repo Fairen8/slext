@@ -10,6 +10,25 @@ docker exec safeline-tengine nginx -t              # конфиг валиден
 bash tests/verify-install.sh                       # полный smoke
 ```
 
+## `nginx: [emerg] ... cannot load certificate key "/opt/slext/conf/mgt.key"`
+
+Сертификат `mgt.crt` был без парного приватного ключа. SLExt генерирует пару
+автоматически; чтобы починить вручную:
+
+```bash
+# проверить пару
+openssl x509 -noout -modulus -in /opt/slext/conf/mgt.crt | openssl md5
+openssl rsa  -noout -modulus -in /opt/slext/conf/mgt.key | openssl md5   # должен совпасть
+
+# пересоздать (если ключа нет или пара не совпадает)
+openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+  -keyout /opt/slext/conf/mgt.key -out /opt/slext/conf/mgt.crt -subj '/CN=SafeLine'
+chmod 600 /opt/slext/conf/mgt.key
+
+bash /opt/slext/bin/apply-injection.sh   # применит пару и перечитает nginx хоста
+nginx -t && systemctl reload nginx
+```
+
 ## В панели нет раздела SLExt
 
 1. Проверьте, что `index.html` панели содержит инъекцию:

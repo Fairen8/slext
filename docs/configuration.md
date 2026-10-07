@@ -9,7 +9,8 @@
 | `/opt/slext/conf/extver` | версия фронтенда (`ext.js?v=N`) |
 | `/opt/slext/conf/countries.json` | коды стран для гео-блокировки |
 | `/opt/slext/conf/lb-upstreams.conf` | сгенерированный upstream-конфиг балансировщика |
-| `/opt/slext/conf/mgt.crt` | сертификат mgt (для внутренних HTTPS-запросов) |
+| `/opt/slext/conf/mgt.crt` | сертификат mgt (для конфигов nginx, ссылающихся на `/opt/slext/conf/mgt.crt`) |
+| `/opt/slext/conf/mgt.key` | приватный ключ к `mgt.crt`; генерируется автоматически при установке/применении, если отсутствует или не совпадает с сертификатом (`600`) |
 | `/opt/slext/www/` | ассеты панели и страниц |
 | `/data/safeline/logs/nginx/slext_traffic.log` | access_log прокси для аналитики |
 

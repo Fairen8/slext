@@ -2,7 +2,7 @@
   'use strict';
 
   var API = location.origin + '/extapi';
-  var EXTVER = '53';
+  var EXTVER = '54';
 
   function tok() {
     try { return localStorage.getItem('safeline_auth') || ''; } catch (e) { return ''; }
@@ -78,11 +78,12 @@
   }
 
   function initTheme() {
+    // Новый дизайн — тёмная консоль по умолчанию; светлая остаётся по переключателю (slext_dark=0).
+    var dark = true;
     try {
-      if (localStorage.getItem('slext_dark') === '1') {
-        document.documentElement.classList.add('slext-dark');
-      }
+      if (localStorage.getItem('slext_dark') === '0') dark = false;
     } catch (e) {}
+    document.documentElement.classList.toggle('slext-dark', dark);
   }
 
   function themeBtn() {
@@ -144,16 +145,29 @@
     return node;
   }
 
-  var SL_TABS = [
-    ['overview', 'Обзор'],
-    ['proxy', 'Проксирование'],
-    ['dns', 'DNS и TLS'],
-    ['wr', 'Зал ожидания'],
-    ['lt', 'Тест ёмкости'],
-    ['pages', 'Страницы'],
-    ['sec', 'Безопасность'],
-    ['notify', 'Уведомления']
+  /* Иконки разделов (24x24, fill=currentColor) */
+  var SL_ICONS = {
+    overview: 'M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z',
+    proxy: 'M3.9 12c0-1.7 1.4-3.1 3.1-3.1h2.6V7H7c-2.8 0-5 2.2-5 5s2.2 5 5 5h2.6v-1.9H7c-1.7 0-3.1-1.4-3.1-3.1zM8 13h8v-2H8v2zm9-6h-2.6v1.9H17c1.7 0 3.1 1.4 3.1 3.1s-1.4 3.1-3.1 3.1h-2.6V17H17c2.8 0 5-2.2 5-5s-2.2-5-5-5z',
+    dns: 'M12 1a9 9 0 0 0-9 9c0 3.9 2.5 7.2 6 8.5V21h6v-2.5c3.5-1.3 6-4.6 6-8.5a9 9 0 0 0-9-9zm-1 16.9V16h2v1.9c-1 .2-2-.1-2-.1s-.1 0-1 .1zm2-3.9h-2V8h2v6z',
+    wr: 'M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z',
+    lt: 'M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z',
+    pages: 'M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z',
+    sec: 'M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z',
+    notify: 'M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5S10.5 3.17 10.5 4v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z'
+  };
+
+  /* Навигация: сгруппированные разделы вместо плоского ряда вкладок */
+  var SL_GROUPS = [
+    { title: 'Мониторинг', items: [['overview', 'Дашборд'], ['proxy', 'Проксирование'], ['dns', 'DNS и TLS']] },
+    { title: 'Доступность', items: [['wr', 'Зал ожидания'], ['lt', 'Тест ёмкости']] },
+    { title: 'Защита', items: [['sec', 'Безопасность'], ['pages', 'Страницы ошибок']] },
+    { title: 'Система', items: [['notify', 'Уведомления']] }
   ];
+  var SL_TABS = [];
+  SL_GROUPS.forEach(function (g) {
+    g.items.forEach(function (t) { SL_TABS.push([t[0], t[1]]); });
+  });
   var SL_TAB = 'overview';
   var SL_ME = null;
   var TAB_PERM = {
@@ -173,16 +187,27 @@
   }
 
   function slApplyAccess() {
-    var btns = document.querySelectorAll('#sl-app-tabs .sl-tabbtn');
+    var btns = document.querySelectorAll('#sl-app-nav .sl-navbtn');
     var first = null, i;
     for (i = 0; i < btns.length; i++) {
       var tab = btns[i].getAttribute('data-tab');
       var perm = TAB_PERM[tab];
-      var ok = !perm || can(perm) || (tab === 'sec' && (can('skip.view') || can('geo.view')));
+      var ok = !perm || can(perm) ||
+        (tab === 'sec' && (can('skip.view') || can('geo.view') || can('crowdsec.view')));
       btns[i].style.display = ok ? '' : 'none';
       if (ok && !first) first = tab;
     }
-    var cur = document.querySelector('#sl-app-tabs .sl-tabbtn[data-tab="' + SL_TAB + '"]');
+    // скрываем заголовки групп, в которых не осталось доступных разделов
+    var groups = document.querySelectorAll('#sl-app-nav .sl-nav-group');
+    for (i = 0; i < groups.length; i++) {
+      var n = groups[i].nextElementSibling, any = false;
+      while (n && !n.classList.contains('sl-nav-group')) {
+        if (n.classList.contains('sl-navbtn') && n.style.display !== 'none') any = true;
+        n = n.nextElementSibling;
+      }
+      groups[i].style.display = any ? '' : 'none';
+    }
+    var cur = document.querySelector('#sl-app-nav .sl-navbtn[data-tab="' + SL_TAB + '"]');
     if (cur && cur.style.display === 'none' && first) slSetTab(first, true);
     var chip = document.getElementById('sl-app-user');
     if (chip && SL_ME) {
@@ -238,31 +263,67 @@
     var a = document.getElementById('sl-app');
     if (a) { slNav(); return a; }
     if (location.pathname.indexOf('/login') === 0) return null;
-    var tabs = SL_TABS.map(function (t) {
-      return '<button class="sl-tabbtn" data-tab="' + t[0] + '">' + t[1] + '</button>';
+    var nav = SL_GROUPS.map(function (g) {
+      return '<div class="sl-nav-group">' + esc(g.title) + '</div>' +
+        g.items.map(function (t) {
+          var icon = SL_ICONS[t[0]] || '';
+          return '<button class="sl-navbtn" data-tab="' + t[0] + '" title="' + esc(t[1]) + '">' +
+            '<span class="sl-nav-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + icon + '"/></svg></span>' +
+            '<span class="sl-nav-t">' + esc(t[1]) + '</span>' +
+            (t[0] === 'wr' ? '<span class="sl-nav-dot" id="sl-nav-dot-wr"></span>' : '') +
+            '</button>';
+        }).join('');
     }).join('');
     var panes = SL_TABS.map(function (t) {
       return '<div class="sl-tabpane" id="sl-tab-' + t[0] + '"></div>';
     }).join('');
     a = el('<div id="sl-app">' +
-      '<div id="sl-app-head">' +
-      '<span class="sl-crumb">SLExt</span>' +
-      '<span class="sl-crumb-sep">&rsaquo;</span>' +
-      '<span class="sl-tabname" id="sl-app-tab-name">Обзор</span>' +
+      '<div id="sl-app-scrim"></div>' +
+      '<aside id="sl-app-side">' +
+      '<div class="sl-side-head">' +
+      '<span class="sl-logo"><span class="sl-logo-mark">SL</span>SLExt</span>' +
+      '<span class="sl-ver" id="sl-app-ver">v54</span>' +
+      '<button id="sl-side-close" class="sl-iconbtn" title="Свернуть меню" aria-label="Свернуть меню">' +
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>' +
+      '</button></div>' +
+      '<nav id="sl-app-nav">' + nav + '</nav>' +
+      '<div class="sl-side-foot">' +
+      '<div class="sl-chip-stat" id="sl-chip-wr" title="Зал ожидания"><i></i><span>зал: —</span></div>' +
+      '<div class="sl-chip-stat" id="sl-chip-skip" title="Skip decryption"><i></i><span>skip: —</span></div>' +
+      '</div></aside>' +
+      '<div id="sl-app-main">' +
+      '<header id="sl-app-head">' +
+      '<button id="sl-burger" class="sl-iconbtn" title="Меню" aria-label="Меню">' +
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z"/></svg></button>' +
+      '<div class="sl-crumbs"><span class="sl-crumb">SLExt</span>' +
+      '<span class="sl-crumb-sep">/</span>' +
+      '<span class="sl-tabname" id="sl-app-tab-name">Дашборд</span></div>' +
       '<span class="sl-badge" id="sl-app-user"></span>' +
       '<span class="sl-hint" id="sl-app-status"></span>' +
-      '<button id="sl-app-close" title="Закрыть" aria-label="Закрыть">' +
+      '<button id="sl-app-refresh" class="sl-iconbtn" title="Обновить раздел" aria-label="Обновить">' +
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>' +
+      '<button id="sl-app-close" class="sl-iconbtn" title="Закрыть" aria-label="Закрыть">' +
       '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">' +
       '<path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>' +
-      '</svg></button></div>' +
-      '<div id="sl-app-tabs">' + tabs + '</div>' +
-      '<div id="sl-app-body">' + panes + '</div></div>');
+      '</svg></button></header>' +
+      '<div id="sl-app-body">' + panes + '</div></div></div>');
     document.body.appendChild(a);
     a.querySelector('#sl-app-close').addEventListener('click', function () { slClose(); });
-    a.querySelector('#sl-app-tabs').addEventListener('click', function (e) {
-      var b = e.target.closest('[data-tab]');
-      if (b) slSetTab(b.getAttribute('data-tab'));
+    a.querySelector('#sl-app-refresh').addEventListener('click', function () {
+      redrawWorkspace();
+      slStatus();
+      toast('Обновлено');
     });
+    a.querySelector('#sl-app-nav').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-tab]');
+      if (b) {
+        slSetTab(b.getAttribute('data-tab'));
+        a.classList.remove('sl-side-open');
+      }
+    });
+    a.querySelector('#sl-burger').addEventListener('click', function () { a.classList.toggle('sl-side-open'); });
+    a.querySelector('#sl-side-close').addEventListener('click', function () { a.classList.remove('sl-side-open'); });
+    a.querySelector('#sl-app-scrim').addEventListener('click', function () { a.classList.remove('sl-side-open'); });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') slClose(); });
     tipInit();
     document.addEventListener('click', function (e) {
@@ -302,7 +363,7 @@
   function slSetTab(tab, silent) {
     SL_TAB = tab || 'overview';
     try { localStorage.setItem('slext_tab', SL_TAB); } catch (e) {}
-    var btns = document.querySelectorAll('#sl-app-tabs .sl-tabbtn');
+    var btns = document.querySelectorAll('#sl-app-nav .sl-navbtn');
     for (var i = 0; i < btns.length; i++) {
       btns[i].classList.toggle('on', btns[i].getAttribute('data-tab') === SL_TAB);
     }
@@ -312,6 +373,8 @@
     for (var j = 0; j < panes.length; j++) {
       panes[j].style.display = (panes[j].id === 'sl-tab-' + SL_TAB) ? 'block' : 'none';
     }
+    var body = document.getElementById('sl-app-body');
+    if (body) body.scrollTop = 0;
     if (!silent && slWorkOpen()) {
       renderWorkspaceTab();
       slStatus();
@@ -345,25 +408,38 @@
 
   function slStatus() {
     var elx = document.getElementById('sl-app-status');
-    if (!elx) return;
     Promise.all([api('/api/waiting'), api('/api/skip')]).then(function (r) {
       var wr = !!(r[0] && r[0].ok && r[0].mgt && r[0].mgt.is_enabled);
       var sk = !!(r[1] && r[1].ok && r[1].skip && r[1].skip.enabled);
-      elx.textContent = 'зал ожидания: ' + (wr ? 'включён' : 'выключен') +
-        ' · skip decryption: ' + (sk ? 'вкл' : 'выкл');
+      if (elx) {
+        elx.textContent = 'зал ожидания: ' + (wr ? 'включён' : 'выключен') +
+          ' · skip decryption: ' + (sk ? 'вкл' : 'выкл');
+      }
+      var cw = document.getElementById('sl-chip-wr');
+      if (cw) {
+        cw.className = 'sl-chip-stat ' + (wr ? 'is-on' : 'is-off');
+        cw.querySelector('span').textContent = 'зал: ' + (wr ? 'включён' : 'выключен');
+      }
+      var cs = document.getElementById('sl-chip-skip');
+      if (cs) {
+        cs.className = 'sl-chip-stat ' + (sk ? 'is-on' : 'is-off');
+        cs.querySelector('span').textContent = 'skip: ' + (sk ? 'вкл' : 'выкл');
+      }
+      var dot = document.getElementById('sl-nav-dot-wr');
+      if (dot) dot.className = 'sl-nav-dot' + (wr ? ' is-on' : '');
     }).catch(function () {});
   }
 
   function renderWorkspaceTab() {
     var host = document.getElementById('sl-tab-' + SL_TAB);
     if (!host) return;
-    if (SL_TAB === 'overview') { renderStatsCard(host); renderCrowdSecCard(host); }
+    if (SL_TAB === 'overview') { renderDashboard(host); renderStatsCard(host); }
     else if (SL_TAB === 'proxy') { renderProxyCard(host); }
     else if (SL_TAB === 'dns') { renderDnsCard(host); }
     else if (SL_TAB === 'wr') { renderWaitingCard(host); }
     else if (SL_TAB === 'lt') { renderLoadTestCard(host); ltPoll(); }
     else if (SL_TAB === 'pages') { renderPageCard(host); }
-    else if (SL_TAB === 'sec') { renderSkipCard(host); renderGeoCard(host); }
+    else if (SL_TAB === 'sec') { renderSkipCard(host); renderGeoCard(host); renderCrowdSecCard(host); }
     else if (SL_TAB === 'notify') { renderNotifyCard(null, null, host); }
   }
 
@@ -934,6 +1010,109 @@
   function kpiRaw(vhtml, t, tip) {
     return '<div class="sl-kpi"' + (tip ? ' data-sl-tip="' + esc(tip) + '"' : '') + '>' +
       '<div class="sl-kpi-v">' + vhtml + '</div><div class="sl-kpi-t">' + esc(t) + '</div></div>';
+  }
+
+  /* ------------------------------ dashboard (обзор) ------------------------------ */
+
+  var DASH_LABELS = {
+    attacks: 'Атаки', proxy: 'Трафик', wr: 'Зал ожидания',
+    dns: 'DNS и TLS', sec: 'Защита', lt: 'Тест ёмкости'
+  };
+
+  function dashTile(id, status, statusCls, value, sub, tip) {
+    return '<button class="sl-tile" data-dash-tab="' + id + '"' +
+      (tip ? ' data-sl-tip="' + esc(tip) + '"' : '') + '>' +
+      '<span class="sl-tile-top"><span class="sl-tile-label">' + esc(DASH_LABELS[id] || id) + '</span>' +
+      '<span class="sl-tile-status ' + (statusCls || '') + '">' + esc(status) + '</span></span>' +
+      '<span class="sl-tile-value">' + value + '</span>' +
+      '<span class="sl-tile-sub">' + sub + '</span></button>';
+  }
+
+  function renderDashboard(host) {
+    if (document.getElementById('sl-dash-sec') || !host) return;
+    var card = el('<div class="sl-card sl-dash" id="sl-dash-sec">' +
+      '<div class="sl-dash-head">' +
+      '<div><div class="sl-card-title">Центр управления <span class="sl-badge">SLExt</span></div>' +
+      '<div class="sl-hint">Сводка по всем разделам. Нажмите на плитку, чтобы перейти в раздел.</div></div>' +
+      '<button class="sl-btn" id="sl-dash-refresh">Обновить сводку</button></div>' +
+      '<div class="sl-tiles" id="sl-dash-tiles"><div class="sl-hint">Сбор данных…</div></div></div>');
+    host.appendChild(card);
+    card.querySelector('#sl-dash-refresh').addEventListener('click', function () { dashLoad(); });
+    card.querySelector('#sl-dash-tiles').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-dash-tab]');
+      if (b) slSetTab(b.getAttribute('data-dash-tab'));
+    });
+    dashLoad();
+
+    function dashLoad() {
+      var box = document.getElementById('sl-dash-tiles');
+      if (!box) return;
+      box.innerHTML = '<div class="sl-hint">Сбор данных…</div>';
+      Promise.all([
+        api('/api/attacks?hours=24'), api('/api/proxy?hours=24'), api('/api/waiting'),
+        api('/api/dns'), api('/api/geo'), api('/api/skip'), api('/api/loadtest')
+      ]).then(function (r) {
+        if (!box || !document.body.contains(box)) return;
+        box.innerHTML = '';
+        var at = r[0] || {};
+        if (at.ok !== false && !at.error) {
+          var blocked = (at.actions && (at.actions['1'] || at.actions[1])) || 0;
+          var delta = at.prev_total ? Math.round(((at.total - at.prev_total) / at.prev_total) * 100) : 0;
+          var dCls = delta > 0 ? 'is-bad' : 'is-ok';
+          box.innerHTML += dashTile('attacks', '24 ч', '',
+            fmtNum(at.total || 0),
+            'заблокировано ' + fmtNum(blocked) + ' · динамика <b class="' + dCls + '">' + (delta > 0 ? '+' : '') + delta + '%</b>');
+        } else {
+          box.innerHTML += dashTile('attacks', 'нет данных', 'is-muted', '—', esc((at && at.error) || ''));
+        }
+        var px = r[1] || {};
+        if (px.ok) {
+          var errCls = px.err5_pct > 0 ? 'is-bad' : 'is-ok';
+          box.innerHTML += dashTile('proxy', '24 ч', '',
+            esc(px.rps) + ' <small>RPS</small>',
+            'p95 ' + esc(px.p95) + ' мс · 5xx <b class="' + errCls + '">' + esc(px.err5_pct) + '%</b> · накладные ' +
+            (px.over_avg === null ? '—' : esc(px.over_avg) + ' мс'));
+        } else {
+          box.innerHTML += dashTile('proxy', 'нет данных', 'is-muted', '—', esc((px && px.error) || ''));
+        }
+        var wr = r[2] || {}, qs = wr.queue_stats || {};
+        var on = !!(wr.queue && wr.queue.enabled);
+        box.innerHTML += dashTile('wr', on ? 'включён' : 'выключен', on ? 'is-warn' : 'is-ok',
+          fmtNum(qs.active || 0) + ' <small>активны</small>',
+          'в очереди ' + fmtNum(qs.waiting || 0) + ' · обслужено ' + fmtNum(qs.served || 0));
+        var dn = r[3] || {};
+        var minDays = null, hostsN = (dn.hosts || []).length;
+        (dn.hosts || []).forEach(function (h) {
+          var dl = h.last && h.last.tls && h.last.tls.days_left;
+          if (dl !== null && dl !== undefined) minDays = (minDays === null || dl < minDays) ? dl : minDays;
+        });
+        var tlsCls = (minDays !== null && minDays < 14) ? 'is-bad' : 'is-ok';
+        box.innerHTML += dashTile('dns', minDays === null ? '—' : (minDays < 14 ? 'истекает' : 'ок'),
+          minDays === null ? 'is-muted' : tlsCls,
+          minDays === null ? '—' : minDays + ' <small>дн. TLS</small>',
+          'доменов: ' + fmtNum(hostsN));
+        var geo = r[4] || {}, sk = r[5] || {};
+        var parts = [];
+        parts.push(geo.geo && geo.geo.enabled ? ('гео: ' + ((geo.geo.countries || []).length || 0) + ' стр.') : 'гео: выкл');
+        parts.push((sk.skip && sk.skip.enabled) ? 'skip: вкл' : 'skip: выкл');
+        var secOn = !!(geo.geo && geo.geo.enabled) || !!(sk.skip && sk.skip.enabled);
+        box.innerHTML += dashTile('sec', secOn ? 'активна' : 'базовая', secOn ? 'is-ok' : 'is-muted',
+          (geo.geo && geo.geo.countries ? geo.geo.countries.length : 0) + ' <small>стран</small>', parts.join(' · '));
+        var lt = r[6] || {}, job = lt.job || {}, rep = job.report || {};
+        if (job.status === 'running') {
+          box.innerHTML += dashTile('lt', 'идёт тест', 'is-warn', '…',
+            'стадия ' + ((job.progress || {}).stage || 1) + ' · ' + ((job.progress || {}).conc || 1) + ' потоков');
+        } else if (rep.verdict) {
+          box.innerHTML += dashTile('lt', 'есть отчёт', 'is-ok',
+            (rep.stable && rep.stable.rps !== undefined ? rep.stable.rps : '—') + ' <small>RPS</small>',
+            esc(rep.verdict));
+        } else {
+          box.innerHTML += dashTile('lt', 'нет отчёта', 'is-muted', '—', 'запустите тест ёмкости');
+        }
+      }).catch(function () {
+        if (box) box.innerHTML = '<div class="sl-err">Не удалось собрать сводку</div>';
+      });
+    }
   }
 
   var TIP_EL = null;

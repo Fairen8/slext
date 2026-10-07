@@ -11,7 +11,8 @@ fi
 docker exec safeline-mgt mkdir -p /app/static/ext
 docker cp /opt/slext/www/. safeline-mgt:/app/static/ext/
 
-if ! docker exec safeline-mgt grep -q slext-injected /app/static/index.html; then
+if ! docker exec safeline-mgt grep -q slext-injected /app/static/index.html \
+   || ! docker exec safeline-mgt grep -q '/ext/ext\.js' /app/static/index.html; then
   docker exec safeline-mgt cat /app/static/index.html > /tmp/slext-index.html
   python3 /opt/slext/bin/patch_index.py /tmp/slext-index.html /tmp/slext-index-patched.html
   docker cp /tmp/slext-index-patched.html safeline-mgt:/app/static/index.html
@@ -21,9 +22,40 @@ fi
 EXTV="$(cat /opt/slext/conf/extver 2>/dev/null || echo 50)"
 docker exec safeline-mgt sed -i -E 's|href="/ext/ext\.css(\?v=[0-9]*)?|href="/ext/ext.css?v='"$EXTV"'|; s|src="/ext/ext\.js(\?v=[0-9]*)?|src="/ext/ext.js?v='"$EXTV"'|' /app/static/index.html || true
 
-GW=$(docker network inspect safeline-ce -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null)
+GW=$(docker network inspect safeline-ce -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)
 [ -z "$GW" ] && GW=192.168.0.1
 export SLEXT_GW="$GW"
+
+# TLS-пара mgt.crt/mgt.key — самовосстановление, если конфиг nginx ссылается на ключ,
+# которого нет ("BIO_new_file() failed ... /opt/slext/conf/mgt.key").
+ensure_mgt_cert() {
+  MGT_CERT_NEW=0
+  crt=/opt/slext/conf/mgt.crt
+  key=/opt/slext/conf/mgt.key
+  need=0
+  [ -s "$crt" ] || need=1
+  [ -s "$key" ] || need=1
+  if [ "$need" = "0" ]; then
+    c="$(openssl x509 -noout -modulus -in "$crt" 2>/dev/null | openssl md5 2>/dev/null)"
+    k="$(openssl rsa -noout -modulus -in "$key" 2>/dev/null | openssl md5 2>/dev/null)"
+    [ -n "$c" ] && [ "$c" = "$k" ] || need=1
+  fi
+  if [ "$need" = "1" ] && command -v openssl >/dev/null 2>&1; then
+    openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+      -keyout "$key" -out "$crt" -subj '/CN=SafeLine' >/dev/null 2>&1 || true
+    MGT_CERT_NEW=1
+  fi
+  chmod 600 "$key" 2>/dev/null || true
+  chmod 644 "$crt" 2>/dev/null || true
+}
+ensure_mgt_cert
+# Если на хосте есть nginx, ссылающийся на пару, — подхватываем свежий сертификат.
+if [ "$MGT_CERT_NEW" = "1" ] && command -v nginx >/dev/null 2>&1; then
+  if nginx -t >/dev/null 2>&1; then
+    systemctl reload nginx >/dev/null 2>&1 || nginx -s reload >/dev/null 2>&1 || true
+  fi
+fi
+CHANGED=0
 
 # Разрешаем контейнеру панели ходить в API на docker-мосту (идемпотентно).
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q 'Status: active'; then
@@ -43,6 +75,7 @@ rm -f /tmp/slext-def.conf /tmp/slext-def-patched.conf
 LOGCONF=/data/safeline/resources/nginx/conf.d/zz_slext_access_log.conf
 if [ ! -f "$LOGCONF" ]; then
   printf 'access_log /var/log/nginx/access.log safeline;\n' > "$LOGCONF"
+  CHANGED=1
 fi
 
 mkdir -p /data/safeline/resources/nginx/slext-geo /data/safeline/resources/nginx/slext-pages
@@ -75,7 +108,6 @@ if [ ! -f "$CCMAP" ] || ! grep -q 'slext_cc' "$CCMAP" 2>/dev/null; then
   printf '# slext no-store for html (avoid caching encrypted pages)\nmap $http_accept $slext_cc {\n    default "";\n    ~*text/html "no-store";\n}\n' > "$CCMAP"
 fi
 
-CHANGED=0
 # map-гейт зала: создаём дефолтный (пустой), API дальше сам обновляет список сайтов
 QMAP=/data/safeline/resources/nginx/conf.d/zz_slext_queue.conf
 if [ ! -f "$QMAP" ] || ! grep -q 'slext_q_on' "$QMAP" 2>/dev/null; then
@@ -220,18 +252,31 @@ if [ -f /opt/slext/www/auth.css ]; then
 fi
 
 if ! docker exec safeline-mgt sh -c 'sed -n "/location \/assets\/ {/,/^    }/p" /etc/nginx/conf.d/default.conf | grep -q "gzip on;"'; then
-  docker exec safeline-mgt sh -c '
+  docker exec -i safeline-mgt sh -c 'cat > /tmp/slext-gzip.awk' <<'AWK'
+/location \/assets\/ \{/ {
+  print
+  print "        gzip on;"
+  print "        gzip_comp_level 5;"
+  print "        gzip_min_length 1024;"
+  print "        gzip_types application/javascript text/css application/json image/svg+xml font/ttf font/woff2;"
+  print "        gzip_vary on;"
+  next
+}
+{ print }
+AWK
+  if docker exec safeline-mgt sh -c '
     conf=/etc/nginx/conf.d/default.conf
-    awk "
-    /location \/assets\/ \{/ {
-      print
-      print \"        gzip on;\"
-      print \"        gzip_comp_level 5;\"
-      print \"        gzip_types application/javascript text/css application/json image/svg+xml font/ttf font/woff2;\"
-      print \"        gzip_vary on;\"
-      next
-    }
-    { print }
-    " "'$conf'" > /tmp/def.conf && cat /tmp/def.conf > "'$conf'" && nginx -t >/dev/null 2>&1 && nginx -s reload' || true
-  echo "slext-mgt-gzip-applied"
+    cp "$conf" /tmp/def.conf.orig
+    awk -f /tmp/slext-gzip.awk "$conf" > /tmp/def.conf.new
+    cp /tmp/def.conf.new "$conf"
+    if nginx -t >/dev/null 2>&1; then
+      nginx -s reload >/dev/null 2>&1
+      rm -f /tmp/def.conf.new /tmp/def.conf.orig /tmp/slext-gzip.awk
+      exit 0
+    fi
+    cp /tmp/def.conf.orig "$conf"
+    rm -f /tmp/def.conf.new /tmp/def.conf.orig /tmp/slext-gzip.awk
+    exit 1'; then
+    echo "slext-mgt-gzip-applied"
+  fi
 fi
