@@ -1,5 +1,5 @@
-/* SLExt v54 — редизайн UX/UI: тёмная консоль в стиле SafeLine.
-   Светлая тема — базовая, тёмная включается классом .slext-dark (по умолчанию). */
+/* SLExt v55 — интеграция в родную панель SafeLine: под-меню в штатном drawer,
+   разделы в контентной зоне, тёмная/светлая тема и ре-скин родных страниц. */
 
 /* ===== Токены ===== */
 :root {
@@ -396,45 +396,39 @@ html.slext-dark .sl-btn-x:hover { background: rgba(248, 113, 113, .14); }
   background-image: var(--sl-glow);
   color: var(--sl-text);
 }
-#sl-app.open { display: flex; }
-#sl-app-scrim { display: none; }
+#sl-app.open { display: flex; flex-direction: column; }
 
-/* Сайдбар */
-#sl-app-side {
-  width: 236px;
-  flex: 0 0 236px;
-  display: flex;
-  flex-direction: column;
-  background: var(--sl-side-bg);
-  border-right: 1px solid var(--sl-divider);
-  min-height: 0;
-}
-.sl-side-head {
+/* Под-навигация SLExt в родном drawer (группы + разделы) */
+#sl-subnav { padding: 0 4px 10px; }
+#sl-subnav .sl-subgroup { padding: 10px 10px 4px 26px; }
+#sl-subnav .sl-subnavbtn {
   display: flex;
   align-items: center;
-  gap: 9px;
-  height: 56px;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--sl-divider);
-  flex: 0 0 auto;
+  gap: 10px;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px 0 26px;
+  margin: 1px 0;
+  border: 0;
+  border-radius: var(--sl-radius-s);
+  background: transparent;
+  color: inherit;
+  font: 500 13.5px/1.2 var(--sl-font);
+  cursor: pointer;
+  text-align: left;
+  transition: background-color .15s, color .15s, box-shadow .15s;
 }
-.sl-logo { display: inline-flex; align-items: center; gap: 9px; font-size: 15px; font-weight: 800; letter-spacing: -.02em; }
-.sl-logo-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  background: var(--sl-grad);
+#sl-subnav .sl-subnavbtn .sl-nav-ic { width: 18px; flex: 0 0 18px; margin-right: 0; }
+#sl-subnav .sl-subnavbtn .sl-nav-ic svg { width: 18px; height: 18px; fill: currentColor; }
+#sl-subnav .sl-subnavbtn:hover { background: var(--sl-slave); color: var(--sl-primary); }
+#sl-subnav .sl-subnavbtn.on {
+  background-color: var(--sl-primary);
+  background-image: var(--sl-grad);
   color: var(--sl-primary-contrast);
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0;
+  font-weight: 600;
+  box-shadow: 0 6px 16px var(--sl-primary-lighter);
 }
-.sl-ver { font-family: var(--sl-mono); font-size: 11px; color: var(--sl-text3); margin-right: auto; }
-#sl-side-close { display: none; }
-#sl-app-nav { flex: 1 1 auto; overflow-y: auto; padding: 12px 10px; min-height: 0; }
+#sl-subnav .sl-nav-dot { margin-left: auto; }
 .sl-nav-group {
   padding: 12px 8px 5px;
   font-size: 10.5px;
@@ -443,50 +437,22 @@ html.slext-dark .sl-btn-x:hover { background: rgba(248, 113, 113, .14); }
   text-transform: uppercase;
   color: var(--sl-text4);
 }
-.sl-navbtn {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  height: 38px;
-  padding: 0 10px;
-  margin: 1px 0;
-  border: 0;
-  border-radius: var(--sl-radius-s);
-  background: transparent;
-  color: var(--sl-text2);
-  font: 600 13px/1 var(--sl-font);
-  cursor: pointer;
-  text-align: left;
-  transition: background-color .15s, color .15s, box-shadow .15s;
-}
-.sl-navbtn:hover { background: var(--sl-slave); color: var(--sl-text); }
-.sl-navbtn.on {
-  background-color: var(--sl-primary);
-  background-image: var(--sl-grad);
-  color: var(--sl-primary-contrast);
-  box-shadow: 0 6px 18px var(--sl-primary-lighter);
-}
-.sl-nav-ic { display: inline-flex; flex: 0 0 18px; width: 18px; height: 18px; }
-.sl-nav-ic svg { width: 18px; height: 18px; fill: currentColor; }
 .sl-nav-t { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sl-nav-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--sl-text4); }
+.sl-nav-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--sl-text4); flex: 0 0 auto; }
 .sl-nav-dot.is-on { background: var(--sl-warning); box-shadow: 0 0 0 3px rgba(251, 191, 36, .18); }
-.sl-side-foot { flex: 0 0 auto; padding: 12px 14px; border-top: 1px solid var(--sl-divider); display: flex; flex-direction: column; gap: 8px; }
+.sl-head-chips { display: flex; align-items: center; gap: 16px; margin-left: auto; }
 .sl-chip-stat {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   font-size: 12px;
   color: var(--sl-text3);
+  white-space: nowrap;
 }
 .sl-chip-stat i { width: 7px; height: 7px; border-radius: 50%; background: var(--sl-text4); flex: 0 0 auto; }
 .sl-chip-stat.is-on { color: var(--sl-text2); }
 .sl-chip-stat.is-on i { background: var(--sl-success); box-shadow: 0 0 0 3px rgba(52, 211, 153, .16); }
 .sl-chip-stat.is-off i { background: var(--sl-text4); }
-
-/* Основная область */
-#sl-app-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
 #sl-app-head {
   display: flex;
   align-items: center;
@@ -505,7 +471,6 @@ html.slext-dark .sl-btn-x:hover { background: rgba(248, 113, 113, .14); }
 .sl-crumb-sep { font-size: 13px; color: var(--sl-text4); }
 .sl-tabname { font-size: 14px; font-weight: 700; color: var(--sl-text); white-space: nowrap; letter-spacing: -.01em; }
 #sl-app-user { font-family: var(--sl-mono); max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
-#sl-app-status { margin-left: auto; margin-bottom: 0; }
 .sl-iconbtn {
   width: 34px;
   height: 34px;
@@ -522,7 +487,6 @@ html.slext-dark .sl-btn-x:hover { background: rgba(248, 113, 113, .14); }
   transition: background-color .15s, color .15s;
 }
 .sl-iconbtn:hover { background: var(--sl-slave); color: var(--sl-text); }
-#sl-burger { display: none; }
 #sl-app-body { flex: 1 1 auto; overflow-y: auto; padding: 4px 20px 44px; min-height: 0; }
 #sl-app-body .sl-card { max-width: 1360px; margin: 12px auto; }
 .sl-tabpane > .sl-card:first-child { margin-top: 14px; }
@@ -703,21 +667,6 @@ html.slext-dark .sl-toast-bad { background: rgba(240, 68, 56, .14); color: #fca5
 /* ===== Адаптив ===== */
 @media (max-width: 980px) {
   #sl-app { left: 0; }
-  #sl-app-side {
-    position: absolute;
-    z-index: 5;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    transform: translateX(-102%);
-    transition: transform .22s ease;
-    box-shadow: var(--sl-shadow-lift);
-  }
-  #sl-app.sl-side-open #sl-app-side { transform: none; }
-  #sl-app.sl-side-open #sl-app-scrim { display: block; position: absolute; inset: 0; z-index: 4; background: var(--sl-backdrop); }
-  #sl-burger { display: inline-flex; }
-  #sl-side-close { display: inline-flex; }
-  #sl-app-status { display: none; }
 }
 @media (max-width: 720px) {
   #sl-app-head { padding: 0 12px; gap: 6px; }
@@ -725,8 +674,42 @@ html.slext-dark .sl-toast-bad { background: rgba(240, 68, 56, .14); color: #fca5
   .sl-input { min-width: 110px; }
   .sl-input.sl-wide { min-width: 170px; }
   #sl-app-user { display: none; }
+  .sl-head-chips { gap: 10px; }
   .sl-tile-value { font-size: 20px; }
 }
+
+/* ===== Ре-скин родных страниц (светлая тема) ===== */
+html:not(.slext-dark) .MuiPaper-root { border-radius: 12px; }
+html:not(.slext-dark) .MuiButton-root { border-radius: 8px; text-transform: none; }
+html:not(.slext-dark) .MuiOutlinedInput-root { border-radius: 8px; }
+html:not(.slext-dark) .MuiTableCell-root { border-color: #eef1f5 !important; }
+html:not(.slext-dark) .MuiTableHead-root .MuiTableCell-root { background: #f7f9fc !important; color: #667085 !important; }
+html:not(.slext-dark) .MuiButton-contained,
+html:not(.slext-dark) .MuiButton-containedPrimary,
+html:not(.slext-dark) .MuiLoadingButton-root.MuiButton-containedPrimary {
+  background-color: var(--sl-primary) !important;
+  background-image: var(--sl-grad) !important;
+  color: var(--sl-primary-contrast) !important;
+  box-shadow: none !important;
+}
+html:not(.slext-dark) .MuiButton-outlinedPrimary,
+html:not(.slext-dark) .MuiButton-textPrimary { color: var(--sl-primary) !important; }
+html:not(.slext-dark) .MuiListItemButton-root.Mui-selected {
+  background-color: transparent !important;
+  background-image: var(--sl-grad) !important;
+  color: var(--sl-primary-contrast) !important;
+  box-shadow: 0 10px 25px 0 var(--sl-primary-lighter) !important;
+}
+html:not(.slext-dark) .MuiListItemButton-root.Mui-selected .MuiTypography-root,
+html:not(.slext-dark) .MuiListItemButton-root.Mui-selected .MuiSvgIcon-root,
+html:not(.slext-dark) .MuiListItemButton-root.Mui-selected span,
+html:not(.slext-dark) .MuiListItemButton-root.Mui-selected svg { color: var(--sl-primary-contrast) !important; fill: var(--sl-primary-contrast) !important; }
+html:not(.slext-dark) .MuiTabs-indicator { background-color: var(--sl-primary) !important; }
+html:not(.slext-dark) .MuiTab-root.Mui-selected { color: var(--sl-primary) !important; }
+html:not(.slext-dark) .MuiCheckbox-root.Mui-checked,
+html:not(.slext-dark) .MuiRadio-root.Mui-checked,
+html:not(.slext-dark) .MuiSwitch-switchBase.Mui-checked { color: var(--sl-primary) !important; }
+html:not(.slext-dark) .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track { background-color: rgba(15, 189, 180, .4) !important; }
 
 /* ===== Нативные тёмные оверрайды (панель SafeLine) ===== */
 html.slext-dark { color-scheme: dark; }
