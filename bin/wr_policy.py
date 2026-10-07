@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""Политика авто-режима зала ожидания (чистые функции, без зависимостей).
+"""Чистые функции SLExt: политика авто-режима зала ожидания и API-маршруты.
 
-Используется slext-api.py и тестами. Никаких обращений к сети/файлам/БД.
+Используется slext-api.py, patch_site_page.py и тестами.
+Никаких обращений к сети/файлам/БД.
 """
+import re
+
+API_PATH_RE = re.compile(r'^/[A-Za-z0-9_\-./%]*$')
 
 
 def clamp_int(v, lo, hi, default):
@@ -10,6 +14,34 @@ def clamp_int(v, lo, hi, default):
         return max(lo, min(hi, int(v)))
     except (TypeError, ValueError):
         return default
+
+
+def api_norm_paths(raw, limit=20):
+    """Нормализовать список URL-префиксов для whitelist/rate-limit."""
+    out = []
+    for p in (raw or [])[:limit]:
+        p = str(p or '').strip()[:120]
+        if not p.startswith('/') or '..' in p or not API_PATH_RE.match(p):
+            continue
+        if p not in out:
+            out.append(p)
+    return out
+
+
+def api_zone_name(host):
+    """nginx-совместимое имя зоны rate-limit для домена."""
+    safe = re.sub(r'[^A-Za-z0-9]', '_', str(host or ''))[:40].strip('_')
+    return 'slext_api_' + (safe or 'site')
+
+
+def api_rl_key_var(host):
+    return 'slext_api_rlk_' + api_zone_name(host)[len('slext_api_'):]
+
+
+def api_rl_paths_re(paths):
+    """Regex для map: совпадает с любым из указанных префиксов (с якорем)."""
+    inner = '|'.join(re.escape(str(p)) for p in (paths or []) if str(p).startswith('/'))
+    return '~^(%s)' % inner if inner else '^$'
 
 
 def wr_auto_decision(au, st, actual, rate, now):

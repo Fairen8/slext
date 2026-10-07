@@ -28,8 +28,8 @@ CORS разрешён только для origin панели; `/api/waiting/sta
 | Метод | Путь | Право | Описание |
 |---|---|---|---|
 | GET | `/api/attacks?hours=&site=` | `overview.view` | реальные атаки: тоталы, типы, динамика, топы, гео; учитывает доменные ограничения |
-| GET | `/api/security?hours=` | — | сводка security posture (детекты по категориям, ACL, страницы) |
-| GET | `/api/traffic?hours=` | — | трафик из логов nginx: браузеры/ОС/устройства, статусы, referer, топы |
+| GET | `/api/security?hours=` | `proxy.view` | сводка security posture (детекты по категориям, ACL, страницы; учитывает домены) |
+| GET | `/api/traffic?hours=` | `proxy.view` | трафик из логов nginx: браузеры/ОС/устройства, статусы, referer, топы |
 | GET | `/api/proxy?hours=&site=` | `proxy.view` | золотые сигналы: RPS, перцентили, Apdex, ошибки, трафик, топы, медленные (фильтр по доменам) |
 | GET | `/api/dns` | `dns.view` | домены: последние проверки (A/AAAA/NS/MX/TXT/SPF/DMARC/TLS) и история `samples` |
 | POST | `/api/dns/check` | `dns.check` | внеочередная полная проверка (`{host?}` — один домен или все) |
@@ -70,6 +70,8 @@ CORS разрешён только для origin панели; `/api/waiting/sta
 | GET | `/api/geo` | `geo.view` | гео-настройки и выбранные страны с размером CIDR |
 | POST | `/api/geo` | `geo.edit` | `{geo:{enabled, mode, countries[]}}` |
 | POST | `/api/geo/sync` | `geo.edit` | `{countries[]}` — скачать ipdeny и применить списки |
+| GET | `/api/apiroutes?site=` | `api.view` | API-маршруты: сайты (с фильтром по доменам), конфиг whitelist/rate-limit, время применения |
+| POST | `/api/apiroutes` | `api.edit` | `{site, enabled, paths[], rate, burst}` — whitelist путей (обход челленджа) + rate-limit на IP; генерирует карты/зоны, патчит сайт, `nginx -t`, reload |
 
 ## Уведомления и инфраструктура
 

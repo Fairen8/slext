@@ -4,6 +4,8 @@ import os
 import re
 import sys
 
+from wr_policy import api_zone_name, clamp_int
+
 PAGES_DIR = '/etc/nginx/slext-pages'
 HOST_PAGES_DIR = '/data/safeline/resources/nginx/slext-pages'
 PAGES = [
@@ -142,6 +144,48 @@ def queue_enabled_hosts():
             if (c or {}).get('queue', {}).get('enabled')}
     except Exception:
         return set()
+
+
+def api_route_cfg(host):
+    try:
+        st = json.load(open('/opt/slext/conf/state.json', encoding='utf-8'))
+        return ((st.get('api_routes', {}) or {}).get('sites', {}) or {}).get(host) or {}
+    except Exception:
+        return {}
+
+
+WL_MARK = '# slext-api-wl'
+RL_MARK = '# slext-api-rl'
+WL_IF = 'if ($slext_api_wl) { rewrite ^ /@slext-plain last; } ' + WL_MARK
+
+
+def patch_api_routes(text, cfg, host):
+    """Whitelist путей (обход челленджа) + rate-limit на @slext-plain.
+
+    Управляется состоянием state.json (api_routes). Идемпотентно: старые строки
+    по маркерам снимаются, затем при включённой конфигурации вставляются заново.
+    """
+    changed = False
+    orig = text
+    for mark in (WL_MARK, RL_MARK):
+        if mark in text:
+            text = '\n'.join(ln for ln in text.split('\n') if mark not in ln)
+            changed = True
+    if not (cfg and cfg.get('enabled') and cfg.get('paths')):
+        return text, changed and text != orig
+    m = re.search(r'^([ \t]*)if \(\$slext_skip\) \{ rewrite \^ /@slext-plain last; \} # slext-skip-if$',
+                  text, re.M)
+    if m:
+        text = text[:m.end()] + '\n' + m.group(1) + WL_IF + text[m.end():]
+        changed = True
+    mp = re.search(r'(location = /@slext-plain \{\n)([ \t]*)', text)
+    if mp:
+        burst = clamp_int(cfg.get('burst'), 0, 1000, 40)
+        line = ('%slimit_req zone=%s burst=%d nodelay; %s\n' %
+                (mp.group(2), api_zone_name(host), burst, RL_MARK))
+        text = text[:mp.end(2)] + line + text[mp.end(2):]
+        changed = True
+    return text, changed and text != orig
 
 
 def patch_queue(text, enabled=False):
@@ -465,10 +509,13 @@ def patch(path, files):
     text, ch = patch_gate(text)
     changed = changed or ch
     qenabled = False
+    qhost = ''
     mh = re.search(r'^[ \t]*server_name\s+([^;]+);', text, re.M)
     if mh:
         qhost = mh.group(1).split()[0].strip()
         qenabled = qhost in queue_enabled_hosts()
+    text, ch = patch_api_routes(text, api_route_cfg(qhost), qhost)
+    changed = changed or ch
     text, ch = patch_queue(text, qenabled)
     changed = changed or ch
     text, ch = patch_px_log(text)

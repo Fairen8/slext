@@ -2,7 +2,7 @@
   'use strict';
 
   var API = location.origin + '/extapi';
-  var EXTVER = '55';
+  var EXTVER = '56';
 
   function tok() {
     try { return localStorage.getItem('safeline_auth') || ''; } catch (e) { return ''; }
@@ -193,7 +193,7 @@
       var tab = btns[i].getAttribute('data-tab');
       var perm = TAB_PERM[tab];
       var ok = !perm || can(perm) ||
-        (tab === 'sec' && (can('skip.view') || can('geo.view') || can('crowdsec.view')));
+        (tab === 'sec' && (can('skip.view') || can('geo.view') || can('crowdsec.view') || can('api.view')));
       btns[i].style.display = ok ? '' : 'none';
       if (ok && !first) first = tab;
     }
@@ -440,7 +440,7 @@
     else if (SL_TAB === 'wr') { renderWaitingCard(host); }
     else if (SL_TAB === 'lt') { renderLoadTestCard(host); ltPoll(); }
     else if (SL_TAB === 'pages') { renderPageCard(host); }
-    else if (SL_TAB === 'sec') { renderSkipCard(host); renderGeoCard(host); renderCrowdSecCard(host); }
+    else if (SL_TAB === 'sec') { renderSkipCard(host); renderGeoCard(host); renderApiRoutesCard(host); renderCrowdSecCard(host); }
     else if (SL_TAB === 'notify') { renderNotifyCard(null, null, host); }
   }
 
@@ -1431,6 +1431,69 @@
             toast(r.ok ? 'Гео-блокировка применена' : 'Ошибка применения', !r.ok);
           });
         }
+      });
+    });
+  }
+
+  /* ------------------------------ api routes (whitelist + rate-limit) ------------------------------ */
+
+  var API_ROUTES_SITE = '';
+
+  function renderApiRoutesCard(host) {
+    if (document.getElementById('sl-api-sec') || !host) return;
+    var url = '/api/apiroutes' + (API_ROUTES_SITE ? '?site=' + encodeURIComponent(API_ROUTES_SITE) : '');
+    api(url).then(function (d) {
+      if (!d || !d.ok) return;
+      if (document.getElementById('sl-api-sec')) return;
+      if (!API_ROUTES_SITE) API_ROUTES_SITE = d.host || '';
+      var sites = d.sites || [];
+      var cfg = d.cfg || {};
+      var siteOpts = sites.map(function (s) {
+        var h = (s.hosts || [''])[0];
+        return '<option value="' + esc(h) + '"' + (h === d.host ? ' selected' : '') + '>' +
+          esc(h || ('#' + s.id)) + '</option>';
+      }).join('');
+      var card = el('<div class="sl-card" id="sl-api-sec">' +
+        '<div class="sl-card-title">API-маршруты — whitelist и rate-limit <span class="sl-badge">SLExt</span></div>' +
+        '<div class="sl-hint">Запросы по указанным путям (по умолчанию <b>/api/v1/</b>) идут в обход JS-челленджа SafeLine — страницы <b>/</b> и <b>/login</b> остаются под проверкой. На эти же пути включается лимит запросов с одного IP — предохранитель поверх лимитов приложения. Фильтрация WAF на пути сохраняется.</div>' +
+        '<div class="sl-row"><label>Сайт</label><select class="sl-input" id="sl-api-site">' + siteOpts + '</select>' +
+        '<span class="sl-badge" id="sl-api-st">' + (cfg.enabled ? 'включено' : 'выключено') + '</span>' +
+        '<span class="sl-hint" id="sl-api-upd" style="margin:0">' + (d.updated_at ? ('обновлено ' + fmtTime(d.updated_at)) : '') + '</span></div>' +
+        '<div class="sl-row"><label><input type="checkbox" id="sl-api-on"' + (cfg.enabled ? ' checked' : '') + '> включено</label></div>' +
+        '<div class="sl-row"><label>Пути (по одному в строке)</label>' +
+        '<textarea class="sl-input sl-wide" id="sl-api-paths" rows="3">' + esc((cfg.paths || ['/api/v1/']).join('\n')) + '</textarea></div>' +
+        '<div class="sl-row"><label data-sl-tip="Сколько запросов в минуту с одного IP допускается на указанных путях.">лимит, зап/мин на IP</label>' +
+        '<input class="sl-input sl-w" id="sl-api-rate" type="number" min="10" max="10000" value="' + esc(cfg.rate) + '">' +
+        '<label data-sl-tip="Запас сверх лимита, обслуживаемый без задержки (всплески).">burst</label>' +
+        '<input class="sl-input sl-w" id="sl-api-burst" type="number" min="0" max="1000" value="' + esc(cfg.burst) + '">' +
+        '<button class="sl-btn sl-btn-pri" id="sl-api-save">Сохранить и применить</button>' +
+        '<span class="sl-hint" id="sl-api-out" style="margin:0">' + esc(d.last_error || '') + '</span></div></div>');
+      host.appendChild(card);
+      lockBtn(card, 'sl-api-save', 'api.edit');
+      card.addEventListener('change', function (e) {
+        if (e.target.id === 'sl-api-site') {
+          API_ROUTES_SITE = e.target.value;
+          removeSection('sl-api-sec');
+          if (SL_TAB === 'sec') renderApiRoutesCard(host);
+        }
+      });
+      card.addEventListener('click', function (e) {
+        if (e.target.id !== 'sl-api-save') return;
+        var paths = (document.getElementById('sl-api-paths').value || '')
+          .split('\n').map(function (x) { return x.trim(); }).filter(Boolean);
+        var out = document.getElementById('sl-api-out');
+        out.textContent = 'Применяю...';
+        api('/api/apiroutes', { method: 'POST', body: {
+          site: document.getElementById('sl-api-site').value,
+          enabled: document.getElementById('sl-api-on').checked,
+          paths: paths,
+          rate: parseInt(document.getElementById('sl-api-rate').value, 10) || 120,
+          burst: parseInt(document.getElementById('sl-api-burst').value, 10) || 0
+        } }).then(function (r) {
+          out.textContent = r.ok ? 'Применено' : ('Ошибка: ' + (r.info || r.error || ''));
+          toast(r.ok ? 'API-маршруты применены' : ('Ошибка: ' + (r.info || '')), !r.ok);
+          if (r.ok) { removeSection('sl-api-sec'); renderApiRoutesCard(host); }
+        });
       });
     });
   }
