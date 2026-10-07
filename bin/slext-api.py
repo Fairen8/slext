@@ -27,7 +27,8 @@ from string import Template
 
 import psycopg2
 
-from wr_policy import clamp_int, wr_auto_decision  # noqa: E402
+from wr_policy import (api_norm_paths, api_rl_key_var, api_rl_paths_re,  # noqa: E402
+                       api_zone_name, clamp_int, wr_auto_decision)
 
 VERSION = '3.0'
 BASE = '/opt/slext'
@@ -38,6 +39,8 @@ GEO_DIR = os.path.join(BASE, 'conf', 'geo')
 NGINX_ROOT = '/data/safeline/resources/nginx'
 GEO_NGINX_DIR = os.path.join(NGINX_ROOT, 'slext-geo')
 PAGES_DIR = os.path.join(NGINX_ROOT, 'slext-pages')
+API_WL_FILE = os.path.join(NGINX_ROOT, 'conf.d', 'zz_slext_api_wl.conf')
+API_RL_FILE = os.path.join(NGINX_ROOT, 'conf.d', 'zz_slext_api_rl.conf')
 APPLY_SH = os.path.join(BASE, 'bin', 'apply-injection.sh')
 PAGE_PATCH = os.path.join(BASE, 'bin', 'patch_site_page.py')
 COUNTRIES_FILE = os.path.join(BASE, 'conf', 'countries.json')
@@ -301,6 +304,7 @@ def default_state():
         'backup': {'enabled': True, 'hour': 4, 'keep_days': 7,
                    'dir': '/var/backups/slext', 'last_run': 0, 'last_error': ''},
         'waiting': {'sites': {}, 'panel_base': '', 'last_session_id': 0},
+        'api_routes': {'sites': {}, 'updated_at': 0, 'last_error': ''},
         'skip': {'enabled': True},
     }
 
@@ -346,7 +350,7 @@ def load_state():
             return default_state()
         st = migrate_state(st)
         base = default_state()
-        for k in ('geo', 'alarm', 'syslog', 'backup', 'waiting'):
+        for k in ('geo', 'alarm', 'syslog', 'backup', 'waiting', 'api_routes'):
             if isinstance(st.get(k), dict):
                 base[k] = {**base[k], **st[k]}
         if isinstance(st.get('page'), dict):
@@ -2793,6 +2797,79 @@ def queue_apply(host, enabled=None, max_concurrent=None, ttl=None, max_waiting=N
     return queue_cfg(host)
 
 
+def api_routes_cfg():
+    with LOCK:
+        return json.loads(json.dumps((STATE.get('api_routes') or {}).get('sites') or {}))
+
+
+def api_routes_files_write(sites=None):
+    """Сгенерировать nginx-конфиги: whitelist-карта и зоны rate-limit.
+
+    sites задан — пишем из него (для атомарного сохранения), иначе из STATE.
+    """
+    if sites is None:
+        sites = api_routes_cfg()
+    wl = ['# slext-api-wl (managed by SLEXT API)',
+          'map "$host$uri" $slext_api_wl {',
+          '    default 0;']
+    rl = ['# slext-api-rl (managed by SLEXT API)',
+          'limit_req_status 429;']
+    for host in sorted(sites):
+        c = sites.get(host) or {}
+        paths = [p for p in (c.get('paths') or []) if str(p).startswith('/')]
+        if not (c.get('enabled') and paths):
+            continue
+        for p in paths:
+            wl.append('    "~^%s" 1;' % re.escape(host + str(p)))
+        zone = api_zone_name(host)
+        key = api_rl_key_var(host)
+        rl.append('# %s' % host)
+        rl.append('map $uri $%s {' % key)
+        rl.append('    default "";')
+        rl.append('    "%s" $binary_remote_addr;' % api_rl_paths_re(paths))
+        rl.append('}')
+        rl.append('limit_req_zone $%s zone=%s:10m rate=%dr/m;' %
+                  (key, zone, clamp_int(c.get('rate'), 10, 10000, 120)))
+    wl.append('}')
+    ok = True
+    for path, lines in ((API_WL_FILE, wl), (API_RL_FILE, rl)):
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(lines) + '\n')
+            os.replace(tmp, path)
+        except OSError:
+            ok = False
+    return ok
+
+
+def api_routes_apply():
+    """Записать конфиги, перепатчить сайты и перечитать nginx."""
+    if not api_routes_files_write():
+        return False, 'не удалось записать конфиги API-маршрутов'
+    rc, out, err = run(['/opt/slext/bin/apply-injection.sh'], timeout=120)
+    if rc != 0:
+        return False, ('apply-injection: ' + (err or out))[:300]
+    rc2, out2, err2 = run(['docker', 'exec', 'safeline-tengine', 'nginx', '-t'], timeout=60)
+    if rc2 != 0:
+        return False, (err2 or out2)[:300]
+    run(['docker', 'exec', 'safeline-tengine', 'nginx', '-s', 'reload'], timeout=60)
+    with LOCK:
+        st = STATE.setdefault('api_routes', {})
+        st['updated_at'] = int(time.time())
+        st['last_error'] = ''
+        save_state(STATE)
+    return True, 'ok'
+
+
+def api_routes_startup():
+    try:
+        api_routes_files_write()
+    except Exception:
+        pass
+
+
 def site_patch_queue_line():
     return 'if ($slext_queue_gate) { rewrite ^ /@slext-queue last; } # slext-queue-if'
 RATE_CACHE = {'at': 0, 'window': 0, 'value': 0}
@@ -3971,6 +4048,8 @@ SLEXT_PERMS = [
     ('skip.control', 'Skip decryption — переключение'),
     ('geo.view', 'Гео-блокировка — просмотр'),
     ('geo.edit', 'Гео-блокировка — изменение'),
+    ('api.view', 'API-маршруты (whitelist и rate-limit) — просмотр'),
+    ('api.edit', 'API-маршруты (whitelist и rate-limit) — изменение'),
     ('notify.view', 'Уведомления — просмотр'),
     ('notify.edit', 'Уведомления — изменение'),
     ('access.manage', 'Управление доступом'),
@@ -3979,7 +4058,7 @@ PERM_KEYS = [k for k, _ in SLEXT_PERMS]
 ALL_VIEW = [k for k in PERM_KEYS if k.endswith('.view')]
 SLEXT_ROLES = {
     'admin': PERM_KEYS,
-    'operator': ALL_VIEW + ['crowdsec.ban', 'wr.control', 'lt.run', 'dns.check', 'lb.edit'],
+    'operator': ALL_VIEW + ['crowdsec.ban', 'wr.control', 'lt.run', 'dns.check', 'lb.edit', 'api.edit'],
     'viewer': ALL_VIEW,
     'custom': [],
 }
@@ -4001,6 +4080,7 @@ PERM_GET = {
     '/api/page': 'pages.view',
     '/api/skip': 'skip.view',
     '/api/geo': 'geo.view',
+    '/api/apiroutes': 'api.view',
     '/api/notify': 'notify.view',
     '/api/alarm': 'notify.view',
     '/api/syslog': 'notify.view',
@@ -4024,6 +4104,7 @@ PERM_POST = {
     '/api/skip': 'skip.control',
     '/api/geo': 'geo.edit',
     '/api/geo/sync': 'geo.edit',
+    '/api/apiroutes': 'api.edit',
     '/api/notify': 'notify.edit',
     '/api/notify/test': 'notify.edit',
     '/api/alarm': 'notify.edit',
@@ -4422,6 +4503,29 @@ class H(BaseHTTPRequestHandler):
                 items.append({'code': cc, 'name': countries.get(cc, cc), 'cidrs': cached})
             return self._json(200, {'ok': True, 'geo': STATE['geo'],
                                     'selected': items, 'countries': countries})
+        if u.path == '/api/apiroutes':
+            sites = site_list()
+            allowed = self._hosts_allowed()
+            if allowed:
+                sites = [s for s in sites if any(h in allowed for h in (s.get('hosts') or []))]
+                if not sites:
+                    return self._json(403, {'ok': False, 'error': 'нет доступа к доменам'})
+            host = qs.get('site', [''])[0][:200]
+            if host and not self._host_ok(host):
+                return self._json(403, {'ok': False, 'error': 'нет доступа к домену ' + host})
+            if not host and sites:
+                host = (sites[0]['hosts'] or [''])[0]
+            cfg = api_routes_cfg().get(host) or {}
+            with LOCK:
+                ar = dict(STATE.get('api_routes') or {})
+            return self._json(200, {'ok': True, 'sites': sites, 'host': host,
+                                    'defaults': {'paths': ['/api/v1/'], 'rate': 120, 'burst': 40},
+                                    'cfg': {'enabled': bool(cfg.get('enabled')),
+                                            'paths': cfg.get('paths') or ['/api/v1/'],
+                                            'rate': clamp_int(cfg.get('rate'), 10, 10000, 120),
+                                            'burst': clamp_int(cfg.get('burst'), 0, 1000, 40)},
+                                    'updated_at': clamp_int(ar.get('updated_at'), 0, 10 ** 12, 0),
+                                    'last_error': str(ar.get('last_error') or '')[:300]})
         if u.path == '/api/page':
             with LOCK:
                 page = json.loads(json.dumps(STATE['page']))
@@ -4654,6 +4758,37 @@ class H(BaseHTTPRequestHandler):
             ok, info = geo_apply()
             return self._json(200 if ok else 400,
                               {'ok': ok, 'fetched': fetched, 'failed': failed, 'apply': info})
+        if u.path == '/api/apiroutes':
+            host = str(body.get('site') or '')[:200]
+            if not self._host_ok(host):
+                return self._json(403, {'ok': False, 'error': 'нет доступа к домену ' + host})
+            if not site_by_host(host):
+                return self._json(400, {'ok': False, 'error': 'домен не найден в SafeLine'})
+            enabled = bool(body.get('enabled'))
+            paths = api_norm_paths(body.get('paths'))
+            if enabled and not paths:
+                return self._json(400, {'ok': False,
+                                        'error': 'укажите хотя бы один путь, например /api/v1/'})
+            rate = clamp_int(body.get('rate'), 10, 10000, 120)
+            burst = clamp_int(body.get('burst'), 0, 1000, 40)
+            with LOCK:
+                cur = json.loads(json.dumps((STATE.get('api_routes') or {}).get('sites') or {}))
+                if enabled:
+                    cur[host] = {'enabled': True, 'paths': paths, 'rate': rate,
+                                 'burst': burst, 'updated_at': int(time.time())}
+                else:
+                    cur.pop(host, None)
+            if not api_routes_files_write(cur):
+                return self._json(500, {'ok': False, 'error': 'не удалось записать nginx-конфиги'})
+            with LOCK:
+                STATE.setdefault('api_routes', {})['sites'] = cur
+                save_state(STATE)
+            ok2, info = api_routes_apply()
+            if not ok2:
+                with LOCK:
+                    STATE['api_routes']['last_error'] = info
+                    save_state(STATE)
+            return self._json(200 if ok2 else 400, {'ok': ok2, 'info': info})
         if u.path == '/api/page':
             page = body.get('page') or {}
             if body.get('preview'):
@@ -5044,6 +5179,7 @@ def main():
     # и может занимать секунды — из-за этого деплой-чек здоровья ловил
     # "connection refused"). Служебные задачи — только в фоне.
     threading.Thread(target=_startup_skip, daemon=True).start()
+    threading.Thread(target=api_routes_startup, daemon=True).start()
     threading.Thread(target=notify_worker, daemon=True).start()
     threading.Thread(target=lb_worker, daemon=True).start()
     threading.Thread(target=alarm_worker, daemon=True).start()

@@ -67,6 +67,43 @@ check("style.setProperty('--accent'" not in queue, 'queue: цвет всё ещ�
 
 check(m.font_css().count('data:font/woff2;base64,') == 6, 'font_css: ожидалось 6 шрифтов')
 
+# API-маршруты: генерация nginx-конфигов (whitelist + rate-limit)
+import tempfile
+_tmp = tempfile.mkdtemp()
+m.API_WL_FILE = os.path.join(_tmp, 'wl.conf')
+m.API_RL_FILE = os.path.join(_tmp, 'rl.conf')
+check(m.api_routes_files_write({'app.example.com': {'enabled': True, 'paths': ['/api/v1/'],
+                                                    'rate': 120, 'burst': 40}}),
+      'api routes: файлы записаны')
+wl = open(m.API_WL_FILE, encoding='utf-8').read()
+rl = open(m.API_RL_FILE, encoding='utf-8').read()
+check('map "$host$uri" $slext_api_wl' in wl, 'api wl: карта')
+check('~^app\\.example\\.com/api/v1/' in wl, 'api wl: путь')
+check('limit_req_zone $slext_api_rlk_app_example_com zone=slext_api_app_example_com:10m rate=120r/m;' in rl,
+      'api rl: зона и rate')
+check('limit_req_status 429' in rl, 'api rl: статус 429')
+check(m.api_routes_files_write({}), 'api routes: пустая запись без ошибок')
+
+# патчер: whitelist-if и limit_req в конфиге сайта
+_pspec = importlib.util.spec_from_file_location('patch_site_page',
+                                                os.path.join(ROOT, 'bin', 'patch_site_page.py'))
+psp = importlib.util.module_from_spec(_pspec)
+_pspec.loader.exec_module(psp)
+site = ('server {\n'
+        '    server_name app.example.com;\n'
+        '    if ($slext_skip) { rewrite ^ /@slext-plain last; } # slext-skip-if\n'
+        '    location = /@slext-plain {\n'
+        '        internal;\n'
+        '    }\n'
+        '}\n')
+cfg = {'enabled': True, 'paths': ['/api/v1/'], 'rate': 120, 'burst': 40}
+out, changed = psp.patch_api_routes(site, cfg, 'app.example.com')
+check(changed and '# slext-api-wl' in out, 'patcher: whitelist-if добавлен')
+check('limit_req zone=slext_api_app_example_com burst=40 nodelay; # slext-api-rl' in out,
+      'patcher: limit_req добавлен')
+out2, changed2 = psp.patch_api_routes(out, {}, 'app.example.com')
+check(changed2 and 'slext-api' not in out2, 'patcher: строки снимаются при отключении')
+
 if fails:
     for f in fails:
         print('FAIL:', f)

@@ -59,5 +59,13 @@ check('7 трафик ровно на пороге считается «выше
 des, act, reason, cnt9 = mod.wr_auto_decision(AU, {'above': 0, 'below': 0}, True, 20, NOW)
 check('8 трафик ровно на пороге выключения считается «ниже»', cnt9['below'] == 1)
 
+# API-маршруты (whitelist + rate-limit)
+paths = mod.api_norm_paths(['/api/v1/', ' api/v2 ', '/../etc', '/a b', '/api/v1/', '/api/v2'])
+check('9 api_norm_paths: фильтрация и дедуп', paths == ['/api/v1/', '/api/v2'])
+check('10 api_zone_name: санитизация', mod.api_zone_name('app.example.com') == 'slext_api_app_example_com')
+check('11 api_zone_name: пустой хост', mod.api_zone_name('') == 'slext_api_site')
+check('12 api_rl_paths_re: якорь', mod.api_rl_paths_re(['/api/v1/']) == '~^(/api/v1/)')
+check('13 api_rl_paths_re: без путей', mod.api_rl_paths_re([]) == '^$')
+
 print('FAIL=%d' % FAIL)
 sys.exit(1 if FAIL else 0)
