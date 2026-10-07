@@ -330,11 +330,11 @@ def migrate_state(st):
 
 def load_state():
     try:
-        with open(STATE_FILE) as f:
+        with open(STATE_FILE, encoding='utf-8') as f:
             st = json.load(f)
     except OSError:
         return default_state()
-    except ValueError:
+    except (ValueError, UnicodeDecodeError):
         # повреждённый state сохраняем для разбора, но не теряем молча
         try:
             os.replace(STATE_FILE, STATE_FILE + '.bad')
@@ -342,10 +342,12 @@ def load_state():
             pass
         return default_state()
     try:
-        st = migrate_state(st or {})
+        if not isinstance(st, dict):
+            return default_state()
+        st = migrate_state(st)
         base = default_state()
-        for k in ('notify', 'geo', 'alarm', 'syslog', 'backup', 'waiting'):
-            if k in st and isinstance(st[k], dict):
+        for k in ('geo', 'alarm', 'syslog', 'backup', 'waiting'):
+            if isinstance(st.get(k), dict):
                 base[k] = {**base[k], **st[k]}
         if isinstance(st.get('page'), dict):
             pg = st['page']
@@ -354,7 +356,7 @@ def load_state():
                 base['page']['brand'] = str(pg['brand'])[:60]
             if pg.get('color'):
                 base['page']['color'] = str(pg['color'])[:20]
-            base['page']['updated_at'] = int(pg.get('updated_at', 0) or 0)
+            base['page']['updated_at'] = clamp_int(pg.get('updated_at'), 0, 10 ** 12, 0)
             src_pages = pg.get('pages') if isinstance(pg.get('pages'), dict) else {}
             for c in PAGE_DEFS:
                 cur = src_pages.get(c)
@@ -364,14 +366,39 @@ def load_state():
                     for fld in ('title', 'message'):
                         if cur.get(fld) is not None:
                             base['page']['pages'][c][fld] = str(cur[fld])[:600]
-        if 'notify' in st and isinstance(st.get('notify'), dict):
+        if isinstance(st.get('notify'), dict):
             for ch in ('telegram', 'discord'):
                 if isinstance(st['notify'].get(ch), dict):
                     base['notify'][ch] = {**default_state()['notify'][ch], **st['notify'][ch]}
-        if 'lb' in st:
-            base['lb'] = {**default_state()['lb'], **st['lb']}
-            base['lb']['health'] = {**default_state()['lb']['health'], **st['lb'].get('health', {})}
-            base['lb']['options'] = {**default_state()['lb']['options'], **st['lb'].get('options', {})}
+        for ch in ('telegram', 'discord'):
+            base['notify'][ch]['last_id'] = clamp_int(base['notify'][ch].get('last_id'), 0, 10 ** 18, 0)
+            base['notify'][ch]['last_send'] = clamp_int(base['notify'][ch].get('last_send'), 0, 10 ** 18, 0)
+            base['notify'][ch]['min_risk'] = clamp_int(base['notify'][ch].get('min_risk'), 0, 10, 0)
+            base['notify'][ch]['last_error'] = str(base['notify'][ch].get('last_error') or '')[:300]
+        if 'alarm' in base and isinstance(base['alarm'].get('rules'), list):
+            for r in base['alarm']['rules']:
+                if isinstance(r, dict):
+                    r['last_fired'] = clamp_int(r.get('last_fired'), 0, 10 ** 18, 0)
+        base['backup']['last_run'] = clamp_int(base['backup'].get('last_run'), 0, 10 ** 18, 0)
+        base['backup']['last_error'] = str(base['backup'].get('last_error') or '')[:300]
+        if isinstance(st.get('lb'), dict):
+            lb = st['lb']
+            base['lb'] = {**default_state()['lb'], **lb}
+            if isinstance(lb.get('health'), dict):
+                base['lb']['health'] = {**default_state()['lb']['health'], **lb['health']}
+            if isinstance(lb.get('options'), dict):
+                base['lb']['options'] = {**default_state()['lb']['options'], **lb['options']}
+            if not isinstance(base['lb'].get('backends'), list):
+                base['lb']['backends'] = []
+            h = base['lb']['health']
+            h['interval'] = clamp_int(h.get('interval'), 5, 300, 15)
+            h['timeout'] = clamp_int(h.get('timeout'), 1, 30, 3)
+            h['failures'] = clamp_int(h.get('failures'), 1, 20, 3)
+            o = base['lb']['options']
+            o['keepalive'] = clamp_int(o.get('keepalive'), 0, 1024, 32)
+            o['tries'] = clamp_int(o.get('tries'), 1, 10, 3)
+            o['passive_max_fails'] = clamp_int(o.get('passive_max_fails'), 0, 100, 3)
+            o['passive_fail_timeout'] = clamp_int(o.get('passive_fail_timeout'), 1, 3600, 10)
         if isinstance(st.get('loadtest'), dict):
             base['loadtest'] = st['loadtest']
         if isinstance(st.get('dns'), dict):
@@ -379,7 +406,7 @@ def load_state():
         if isinstance(st.get('access'), dict):
             base['access'] = st['access']
         return base
-    except (OSError, ValueError):
+    except Exception:
         return default_state()
 
 
@@ -407,8 +434,6 @@ def verify_token(tok):
                                      headers={'Authorization': 'Bearer ' + tok})
         with urllib.request.urlopen(req, timeout=5, context=SSL_CTX) as r:
             ok = r.status == 200
-    except urllib.error.HTTPError as e:
-        ok = e.code == 200
     except Exception:
         ok = False
     if ok:
@@ -491,14 +516,9 @@ def attacks(hours, site='', action=None, atype=None, risk=None, sites=None):
         with db() as conn, conn.cursor() as c:
             c.execute('SELECT COUNT(*) FROM mgt_detect_log_basic WHERE ' + where, args)
             out['total'] = c.fetchone()[0]
-            prev_extra = '' if not site else ' AND host = %s'
-            prev_args = [prev, since] + ([site] if site else [])
-            if not site and sites:
-                prev_extra = ' AND host = ANY(%s)'
-                prev_args = [prev, since, list(sites)]
-            c.execute('SELECT COUNT(*) FROM mgt_detect_log_basic '
-                      'WHERE created_at >= %s AND created_at < %s' + prev_extra +
-                      ' AND attack_type >= 0', prev_args)
+            prev_where = ' AND '.join(['created_at >= %s AND created_at < %s'] + where[1:])
+            prev_args = [prev, since] + list(args[1:])
+            c.execute('SELECT COUNT(*) FROM mgt_detect_log_basic WHERE ' + prev_where, prev_args)
             out['prev_total'] = c.fetchone()[0]
             c.execute('SELECT COUNT(DISTINCT src_ip) FROM mgt_detect_log_basic WHERE ' + where, args)
             out['uniq_ips'] = c.fetchone()[0]
@@ -528,9 +548,16 @@ def attacks(hours, site='', action=None, atype=None, risk=None, sites=None):
             c.execute('SELECT risk_level, COUNT(*) FROM mgt_detect_log_basic WHERE ' + where +
                       ' GROUP BY risk_level ORDER BY 1', args)
             out['by_risk'] = [{'risk': k, 'count': v} for k, v in c.fetchall()]
-            c.execute('SELECT host, COUNT(*) FROM mgt_detect_log_basic '
-                      "WHERE created_at >= %s AND host <> '' AND attack_type >= 0 GROUP BY host ORDER BY 2 DESC",
-                      [since])
+            site_where = ["created_at >= %s", "host <> ''", 'attack_type >= 0']
+            site_args = [since]
+            if site:
+                site_where.append('host = %s')
+                site_args.append(site)
+            elif sites:
+                site_where.append('host = ANY(%s)')
+                site_args.append(list(sites))
+            c.execute('SELECT host, COUNT(*) FROM mgt_detect_log_basic WHERE ' +
+                      ' AND '.join(site_where) + ' GROUP BY host ORDER BY 2 DESC', site_args)
             out['sites'] = [{'host': k, 'count': v} for k, v in c.fetchall()]
             c.execute('SELECT lat, lng, country, city, COUNT(*) FROM mgt_detect_log_basic '
                       "WHERE created_at >= %s AND lat <> '' AND lng <> '' AND attack_type >= 0 "
@@ -539,7 +566,8 @@ def attacks(hours, site='', action=None, atype=None, risk=None, sites=None):
                           for k in c.fetchall()]
     except Exception as e:
         out['error'] = str(e)
-    ATTACKS_CACHE.update({'at': now, 'key': key, 'data': out})
+    if 'error' not in out:
+        ATTACKS_CACHE.update({'at': now, 'key': key, 'data': out})
     return out
 
 
@@ -586,7 +614,7 @@ def export_json(rows, sc):
 LOG_DIR = '/data/safeline/logs/nginx'
 SITE_LOG_DIR = os.path.join(LOG_DIR, 'safeline')
 TRAFFIC_CACHE = {'at': 0, 'hours': 0, 'data': None}
-SEC_CACHE = {'at': 0, 'hours': 0, 'data': None}
+SEC_CACHE = {'at': 0, 'hours': 0, 'sites': None, 'data': None}
 
 UA_BROWSERS = [('Edg/', 'Edge'), ('OPR/', 'Opera'), ('YaBrowser', 'Yandex'),
                ('Firefox/', 'Firefox'), ('Chrome/', 'Chrome'), ('Safari/', 'Safari'),
@@ -626,10 +654,34 @@ def ua_parse(ua):
     return browser, osname, device
 
 
+_MONTH_NUM = {'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
+              'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12}
+
+
 def parse_ts(s):
+    """Дата лога nginx '10/Oct/2026:12:34:56 +0300' без зависимости от локали."""
     try:
-        return int(datetime.datetime.strptime(s.strip(), '%d/%b/%Y:%H:%M:%S %z').timestamp())
-    except (ValueError, TypeError):
+        parts = (s or '').strip().split('/')
+        if len(parts) != 3:
+            return 0
+        day = int(parts[0])
+        month = _MONTH_NUM.get(parts[1][:3].lower())
+        if not month:
+            return 0
+        yt = parts[2].split(':')
+        year = int(yt[0])
+        hour, minute = int(yt[1]), int(yt[2])
+        tail = yt[3].split()
+        sec = int(tail[0])
+        tz = tail[1] if len(tail) > 1 else '+0000'
+        sign = -1 if tz.startswith('-') else 1
+        try:
+            off = sign * (int(tz[1:3]) * 3600 + int(tz[3:5]) * 60)
+        except (ValueError, IndexError):
+            off = 0
+        tzinfo = datetime.timezone(datetime.timedelta(seconds=off))
+        return int(datetime.datetime(year, month, day, hour, minute, sec, tzinfo=tzinfo).timestamp())
+    except (ValueError, TypeError, IndexError):
         return 0
 
 
@@ -709,9 +761,11 @@ def traffic(hours):
                     paths[pk] = paths.get(pk, 0) + 1
                     bkt = ts - (ts % 3600)
                     timeline[bkt] = timeline.get(bkt, 0) + 1
+                    if ts >= int(now) - 3600:
+                        out['last_hour'] += 1
                     if dv == 'Bot/Tool' and len(ua_raw) < 40:
                         ua_raw[m.group('ua')[:120]] = ua_raw.get(m.group('ua')[:120], 0) + 1
-        except OSError:
+        except (OSError, EOFError):
             continue
     out['lines'] = lines
     out['total'] = lines
@@ -755,7 +809,7 @@ def iter_access(hours):
                     if not ts or ts < since:
                         continue
                     yield ts, m
-        except OSError:
+        except (OSError, EOFError):
             continue
 
 
@@ -765,8 +819,10 @@ def _cat(ips, timeline):
             'timeline': [{'ts': t, 'count': n} for t, n in sorted(timeline.items())]}
 
 
-def security_stats(hours):
-    if SEC_CACHE['data'] and SEC_CACHE['hours'] == hours and time.time() - SEC_CACHE['at'] < 60:
+def security_stats(hours, sites=None):
+    sites_key = tuple(sorted(sites)) if sites else None
+    if (SEC_CACHE['data'] and SEC_CACHE['hours'] == hours and SEC_CACHE.get('sites') == sites_key
+            and time.time() - SEC_CACHE['at'] < 60):
         return SEC_CACHE['data']
     cats = {k: ({}, {}) for k in ('rate_limit', 'waiting_room', 'anti_bot', 'auth')}
     for ts, m in iter_access(hours):
@@ -797,6 +853,8 @@ def security_stats(hours):
     since = int(time.time() * sc) - hours * 3600 * sc
     bucket = 3600 * sc
     acl_total, rules, acl_tl, pages, apps, att_tl = 0, [], [], [], [], []
+    host_where = ' AND host = ANY(%s)' if sites_key else ''
+    host_args = [list(sites_key)] if sites_key else []
     try:
         with db() as conn, conn.cursor() as c:
             c.execute('SELECT COUNT(*) FROM mgt_detect_log_basic WHERE created_at >= %s '
@@ -810,14 +868,15 @@ def security_stats(hours):
                       'WHERE created_at >= %s AND attack_type IN (-3, -2) GROUP BY b ORDER BY b',
                       (bucket, bucket, since))
             acl_tl = [{'ts': int(k) / sc, 'count': v} for k, v in c.fetchall()]
-            c.execute('SELECT url_path, COUNT(*) FROM mgt_detect_log_basic WHERE created_at >= %s '
-                      'GROUP BY 1 ORDER BY 2 DESC LIMIT 10', (since,))
+            c.execute('SELECT url_path, COUNT(*) FROM mgt_detect_log_basic WHERE created_at >= %s' +
+                      host_where + ' GROUP BY 1 ORDER BY 2 DESC LIMIT 10', [since] + host_args)
             pages = [{'path': k or '/', 'count': v} for k, v in c.fetchall()]
-            c.execute('SELECT host, COUNT(*) FROM mgt_detect_log_basic WHERE created_at >= %s '
-                      'GROUP BY 1 ORDER BY 2 DESC LIMIT 10', (since,))
+            c.execute('SELECT host, COUNT(*) FROM mgt_detect_log_basic WHERE created_at >= %s' +
+                      host_where + ' GROUP BY 1 ORDER BY 2 DESC LIMIT 10', [since] + host_args)
             apps = [{'host': k or '—', 'count': v} for k, v in c.fetchall()]
             c.execute('SELECT (created_at / %s) * %s AS b, COUNT(*) FROM mgt_detect_log_basic '
-                      'WHERE created_at >= %s GROUP BY b ORDER BY b', (bucket, bucket, since))
+                      'WHERE created_at >= %s' + host_where + ' GROUP BY b ORDER BY b',
+                      [bucket, bucket, since] + host_args)
             att_tl = [{'ts': int(k) / sc, 'count': v} for k, v in c.fetchall()]
     except Exception as e:
         out['error'] = str(e)[:300]
@@ -828,6 +887,7 @@ def security_stats(hours):
     out['attacks_total'] = sum(x['count'] for x in att_tl)
     SEC_CACHE['at'] = time.time()
     SEC_CACHE['hours'] = hours
+    SEC_CACHE['sites'] = sites_key
     SEC_CACHE['data'] = out
     return out
 
@@ -876,16 +936,18 @@ def syslog_send(obj):
         cfg = dict(STATE.get('syslog') or {})
     if not cfg.get('enabled') or not cfg.get('host'):
         return False
-    line = (json.dumps({'ts': int(time.time()), 'host': socket.gethostname(),
-                        'slext': VERSION, **obj}, ensure_ascii=False) + '\n').encode()
     try:
+        line = (json.dumps({'ts': int(time.time()), 'host': socket.gethostname(),
+                            'slext': VERSION, **obj}, ensure_ascii=False) + '\n').encode()
         if cfg.get('proto') == 'tcp':
             with socket.create_connection((cfg['host'], int(cfg.get('port', 514))), timeout=5) as s:
                 s.sendall(line)
         else:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.sendto(line, (cfg['host'], int(cfg.get('port', 514))))
-            s.close()
+            try:
+                s.sendto(line, (cfg['host'], int(cfg.get('port', 514))))
+            finally:
+                s.close()
         return True
     except Exception as e:
         with LOCK:
@@ -969,7 +1031,8 @@ def crowdsec_unban(ip):
 
 
 def node_up(addr):
-    return NODES.get(addr, {}).get('up', True)
+    with LOCK:
+        return dict(NODES.get(addr) or {}).get('up', True)
 
 
 ALGO_LINES = {
@@ -995,15 +1058,20 @@ def render_lb(lb):
     h = lb.get('health') or {}
     servers = []
     for b in lb.get('backends', []):
+        if not isinstance(b, dict):
+            continue
+        addr = str(b.get('addr') or '')
+        if not ADDR_PATTERN.match(addr):
+            continue
         if not b.get('enabled', True):
             continue
-        if h.get('enabled', True) and not node_up(b['addr']):
+        if h.get('enabled', True) and not node_up(addr):
             continue
-        servers.append(b)
+        servers.append({**b, 'addr': addr})
     if not servers:
         lines.append('    server 127.0.0.1:9 down;')
     for b in servers:
-        w = max(1, min(100, int(b.get('weight', 1))))
+        w = max(1, min(100, int(b.get('weight', 1) or 1)))
         parts = ['server %s weight=%d max_fails=%d fail_timeout=%ds' % (b['addr'], w, max_fails, fail_timeout)]
         mc = int(b.get('max_conns', 0) or 0)
         if mc > 0:
@@ -1038,10 +1106,26 @@ def lb_apply():
     with LOCK:
         text = render_lb(STATE['lb'])
     os.makedirs(os.path.dirname(LB_CONF), exist_ok=True)
-    with open(LB_CONF, 'w') as f:
+    old = ''
+    if os.path.exists(LB_CONF):
+        try:
+            with open(LB_CONF, encoding='utf-8', errors='replace') as f:
+                old = f.read()
+        except OSError:
+            old = ''
+    tmp = LB_CONF + '.tmp'
+    with open(tmp, 'w') as f:
         f.write(text)
+    os.replace(tmp, LB_CONF)
     p = subprocess.run(['nginx', '-t'], capture_output=True, text=True)
     if p.returncode != 0:
+        # не оставляем сломанный конфиг на диске
+        try:
+            with open(tmp, 'w') as f:
+                f.write(old)
+            os.replace(tmp, LB_CONF)
+        except OSError:
+            pass
         return False, (p.stderr or p.stdout).strip()
     p = subprocess.run(['nginx', '-s', 'reload'], capture_output=True, text=True)
     return p.returncode == 0, (p.stderr or p.stdout).strip()
@@ -1052,6 +1136,8 @@ def backend_status(lb):
         nodes = {k: dict(v) for k, v in NODES.items()}
     res = []
     for b in lb.get('backends', []):
+        if not isinstance(b, dict) or 'addr' not in b:
+            continue
         st = nodes.get(b['addr'], {'fails': 0, 'up': True})
         res.append({**b, 'up': st.get('up', True), 'fails': st.get('fails', 0)})
     return res
@@ -1083,19 +1169,22 @@ def lb_worker():
                         continue
                     addr = b['addr']
                     ok = check_node(addr, h.get('path', '/'), float(h.get('timeout', 3)))
-                    st = NODES.setdefault(addr, {'fails': 0, 'up': True})
-                    if ok:
-                        st['fails'] = 0
-                        if not st['up']:
-                            st['up'] = True
-                            changed = True
-                            notify_send('SLExt: узел %s снова доступен' % addr)
-                    else:
-                        st['fails'] += 1
-                        if st['up'] and st['fails'] >= int(h.get('failures', 3)):
-                            st['up'] = False
-                            changed = True
-                            notify_send('SLExt: узел %s недоступен и исключён из балансировки' % addr)
+                    with LOCK:
+                        st = NODES.setdefault(addr, {'fails': 0, 'up': True})
+                        if ok:
+                            st['fails'] = 0
+                            if not st['up']:
+                                st['up'] = True
+                                changed = True
+                                if h.get('notify', True):
+                                    notify_send('SLExt: узел %s снова доступен' % addr)
+                        else:
+                            st['fails'] += 1
+                            if st['up'] and st['fails'] >= int(h.get('failures', 3)):
+                                st['up'] = False
+                                changed = True
+                                if h.get('notify', True):
+                                    notify_send('SLExt: узел %s недоступен и исключён из балансировки' % addr)
                 if changed:
                     lb_apply()
         except Exception:
@@ -1114,22 +1203,20 @@ def notify_worker():
             if tg_on or dc_on:
                 tg_min = int(tg.get('min_risk', 0) or 0)
                 dc_min = int(dc.get('min_risk', 0) or 0)
+                # У каждого канала свой курсор: сбой одного не блокирует второй
+                # и не вызывает повторную отправку уже доставленного.
+                tg_cur = int(tg.get('last_id', 0) or 0)
+                dc_cur = int(dc.get('last_id', 0) or 0) if dc_on else tg_cur
+                low = min(tg_cur, dc_cur) if tg_on and dc_on else (tg_cur if tg_on else dc_cur)
                 with db() as conn, conn.cursor() as c:
                     c.execute('SELECT id, src_ip, host, url_path, attack_type, action, risk_level, country '
                               'FROM mgt_detect_log_basic WHERE id > %s ORDER BY id ASC LIMIT 10',
-                              (int(tg.get('last_id', 0)),))
+                              (low,))
                     rows = c.fetchall()
                 for r in rows:
                     risk = int(r[6] or 0)
-                    want_tg = tg_on and risk >= tg_min
-                    want_dc = dc_on and risk >= dc_min
-                    if not want_tg and not want_dc:
-                        # события ниже порогов просто пропускаем (курсор двигаем,
-                        # иначе очередь уведомлений застрянет навсегда)
-                        with LOCK:
-                            STATE['notify']['telegram']['last_id'] = r[0]
-                            save_state(STATE)
-                        continue
+                    want_tg = tg_on and tg_cur < r[0] and risk >= tg_min
+                    want_dc = dc_on and dc_cur < r[0] and risk >= dc_min
                     text = ('SafeLine: атака обнаружена\n'
                             'IP: %s (%s)\nХост: %s\nПуть: %s\nТип: %s | action: %s | risk: %s\nВремя: %s' %
                             (r[1], r[7] or '-', r[2], r[3],
@@ -1142,18 +1229,21 @@ def notify_worker():
                         res.update(notify_send(text, kind='discord'))
                     sent_tg = (not want_tg) or bool(res.get('telegram'))
                     sent_dc = (not want_dc) or bool(res.get('discord'))
-                    if not sent_tg or not sent_dc:
-                        break
                     now = int(time.time())
                     with LOCK:
-                        STATE['notify']['telegram']['last_id'] = r[0]
-                        if want_tg:
-                            STATE['notify']['telegram']['last_send'] = now
-                            STATE['notify']['telegram']['last_error'] = ''
-                        if want_dc:
-                            STATE['notify']['discord']['last_send'] = now
-                            STATE['notify']['discord']['last_error'] = ''
+                        if sent_tg:
+                            STATE['notify']['telegram']['last_id'] = r[0]
+                            if want_tg:
+                                STATE['notify']['telegram']['last_send'] = now
+                                STATE['notify']['telegram']['last_error'] = ''
+                        if sent_dc:
+                            STATE['notify']['discord']['last_id'] = r[0]
+                            if want_dc:
+                                STATE['notify']['discord']['last_send'] = now
+                                STATE['notify']['discord']['last_error'] = ''
                         save_state(STATE)
+                    if not sent_tg or not sent_dc:
+                        break
                     time.sleep(0.3)
         except Exception:
             pass
@@ -1214,23 +1304,31 @@ def do_backup():
         pass
     name = time.strftime('slext-%Y%m%d-%H%M%S.tar.gz')
     path = os.path.join(outdir, name)
-    date = time.strftime('%Y-%m-%d %H:%M:%S')
-    tmpdb = '/tmp/slext-pg.sql'
+    tmpdb = os.path.join(outdir, '.slext-pg-%d.sql' % os.getpid())
     rc, o, e = run(['docker', 'exec', 'safeline-pg', 'pg_dump', '-U', 'safeline-ce',
                     'safeline-ce'], timeout=120)
     if rc != 0:
         return False, (e or o)[:300]
-    with open(tmpdb, 'w') as f:
-        f.write(o)
     try:
+        fd = os.open(tmpdb, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w') as f:
+            f.write(o)
         with tarfile.open(path, 'w:gz') as tar:
             tar.add(os.path.join(BASE, 'conf'), arcname='conf')
             if os.path.isdir(GEO_NGINX_DIR):
                 tar.add(GEO_NGINX_DIR, arcname='nginx/slext-geo')
             if os.path.isdir(PAGES_DIR):
                 tar.add(PAGES_DIR, arcname='nginx/slext-pages')
-            tar.add(LB_CONF, arcname='nginx/lb-upstreams.conf')
+            if os.path.isfile(LB_CONF):
+                tar.add(LB_CONF, arcname='nginx/lb-upstreams.conf')
             tar.add(tmpdb, arcname='db/safeline-ce.sql')
+    except Exception as e:
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            pass
+        return False, ('backup failed: %s' % str(e))[:300]
     finally:
         try:
             os.remove(tmpdb)
@@ -1243,12 +1341,14 @@ def do_backup():
     keep = clamp_int(cfg.get('keep_days'), 1, 365, 7)
     cutoff = time.time() - keep * 86400
     for fn in os.listdir(outdir):
+        if not (fn.startswith('slext-') and fn.endswith('.tar.gz')):
+            continue
         fp = os.path.join(outdir, fn)
-        if fn.endswith('.tar.gz') and os.path.getmtime(fp) < cutoff:
-            try:
+        try:
+            if os.path.getmtime(fp) < cutoff:
                 os.remove(fp)
-            except OSError:
-                pass
+        except OSError:
+            pass
     with LOCK:
         STATE['backup']['last_run'] = int(time.time())
         STATE['backup']['last_error'] = ''
@@ -1288,6 +1388,9 @@ def load_countries():
 
 
 def geo_cached(cc):
+    cc = str(cc or '')
+    if not re.match(r'^[A-Za-z]{2}$', cc):
+        return 0
     fn = os.path.join(GEO_DIR, cc.lower() + '.zone')
     try:
         with open(fn) as f:
@@ -1297,7 +1400,7 @@ def geo_cached(cc):
 
 
 def geo_fetch(cc):
-    cc = (cc or '').upper()
+    cc = str(cc or '').upper()
     if not re.match(r'^[A-Z]{2}$', cc):
         return False, 'bad country code'
     os.makedirs(GEO_DIR, exist_ok=True)
@@ -1342,6 +1445,9 @@ def geo_apply():
                         lines.append('%s %d;' % (ln, val))
         except OSError:
             missing.append(c)
+    # Белый список с неполными зонами заблокировал бы всех — не применяем его.
+    if geo.get('mode') == 'allow' and missing:
+        disabled = True
     with open(os.path.join(GEO_NGINX_DIR, 'deny.list'), 'w') as f:
         f.write('\n'.join(lines) + ('\n' if lines else ''))
     with open(os.path.join(NGINX_ROOT, 'conf.d', 'zz_slext_geo.conf'), 'w') as f:
@@ -1430,9 +1536,12 @@ def page_apply():
             except OSError:
                 pass
     cmd = ['python3', PAGE_PATCH]
-    for fn in sorted(os.listdir(os.path.join(NGINX_ROOT, 'sites-enabled'))):
-        if fn.startswith('IF_'):
-            cmd.append(os.path.join(NGINX_ROOT, 'sites-enabled', fn))
+    sdir = os.path.join(NGINX_ROOT, 'sites-enabled')
+    if not os.path.isdir(sdir):
+        return False, 'sites-enabled не найден'
+    for fn in sorted(os.listdir(sdir)):
+        if fn.startswith('IF_') and not fn.endswith(('.orig', '.bak', '.slext-orig', '.slext-removed')):
+            cmd.append(os.path.join(sdir, fn))
     if not PATCH_LOCK.acquire(timeout=90):
         return False, 'патч уже выполняется'
     try:
@@ -1510,6 +1619,8 @@ def mgt_request(method, path, body=None, token=None):
         with urllib.request.urlopen(req, timeout=15, context=SSL_CTX) as r:
             return r.status, json.loads(r.read().decode() or '{}')
     except urllib.error.HTTPError as e:
+        if e.code in (401, 403) and token is None:
+            _MGT_TOKEN_CACHE['tok'] = ''
         try:
             return e.code, json.loads(e.read().decode() or '{}')
         except Exception:
@@ -1571,7 +1682,7 @@ def waiting_set_enabled(site_id, enabled, token=None):
         for _ in range(6):
             time.sleep(0.5)
             conf = waiting_conf(site_id, token=token)
-            if bool(conf.get('is_enabled')) == bool(enabled):
+            if conf and bool(conf.get('is_enabled')) == bool(enabled):
                 MGT_CONF_CACHE[site_id] = (time.time(), conf)
                 return True, conf, ''
         if not last_err:
@@ -1641,7 +1752,10 @@ def site_patch_fast():
                              txt, count=1, flags=re.M)
             if txt != orig:
                 try:
-                    open(p, 'w', encoding='utf-8').write(txt)
+                    tmp = p + '.slext-tmp'
+                    with open(tmp, 'w', encoding='utf-8') as f:
+                        f.write(txt)
+                    os.replace(tmp, p)
                 except OSError:
                     pass
         rc, out, err = run(['python3', PAGE_PATCH] + files, timeout=60)
@@ -2115,9 +2229,10 @@ def wr_migrate_page_defaults():
 
 def waiting_cfg(host):
     with LOCK:
-        wt = json.loads(json.dumps(STATE.get('waiting') or {}))
+        # копируем только нужный сайт, а не весь STATE (вызывается на каждый опрос очереди)
+        src = (((STATE.get('waiting') or {}).get('sites') or {}).get(host) or {})
+        cfg = json.loads(json.dumps(src))
     base = waiting_defaults(host)
-    cfg = (wt.get('sites') or {}).get(host) or {}
     merged = {
         'page': {**base['page'], **(cfg.get('page') or {})},
         'schedule': {**base['schedule'], **(cfg.get('schedule') or {})},
@@ -2365,15 +2480,18 @@ def queue_write_page():
 
 def queue_stats(host):
     now = time.time()
-    st = queue_state(host)
-    active = len([1 for ts in st['admitted'].values() if now - ts <= QUEUE_ADMITTED_TTL])
-    return {'active': active, 'waiting': len(st['waiting']), 'served': st.get('served', 0),
-            'peak_waiting': st.get('peak_waiting', 0), 'started_at': st.get('started', 0)}
+    ttl = max(60, int(queue_cfg(host).get('ttl') or QUEUE_ADMITTED_TTL))
+    with LOCK:
+        st = queue_state(host)
+        active = len([1 for ts in list(st['admitted'].values()) if now - ts <= ttl])
+        return {'active': active, 'waiting': len(st['waiting']), 'served': st.get('served', 0),
+                'peak_waiting': st.get('peak_waiting', 0), 'started_at': st.get('started', 0)}
 
 
 def queue_reset_state(host):
-    queue_state(host).update({'admitted': {}, 'waiting': [], 'ips': {}, 'served': 0,
-                              'peak_waiting': 0, 'started': int(time.time())})
+    with LOCK:
+        queue_state(host).update({'admitted': {}, 'waiting': [], 'ips': {}, 'served': 0,
+                                  'peak_waiting': 0, 'started': int(time.time())})
 
 
 def queue_try_admit(host, cfg, token, ip=''):
@@ -2383,33 +2501,34 @@ def queue_try_admit(host, cfg, token, ip=''):
     (свой токен при этом всегда проходит и продлевается).
     """
     now = time.time()
-    st = queue_state(host)
-    for t in [t for t, ts in st['admitted'].items() if now - ts > max(60, int(cfg['ttl']))]:
-        st['admitted'].pop(t, None)
-    ips = st.setdefault('ips', {})
-    for k in [k for k, v in ips.items() if not v or v[0] not in st['admitted']]:
-        ips.pop(k, None)
-    if token and token in st['admitted']:
-        st['admitted'][token] = now
-        if ip:
-            ips[ip] = (token, now)
-        return True, None
-    bound = ips.get(ip) if ip else None
-    if bound and now - bound[1] < 60:
+    with LOCK:
+        st = queue_state(host)
+        for t in [t for t, ts in list(st['admitted'].items()) if now - ts > max(60, int(cfg['ttl']))]:
+            st['admitted'].pop(t, None)
+        ips = st.setdefault('ips', {})
+        for k in [k for k, v in list(ips.items()) if not v or v[0] not in st['admitted']]:
+            ips.pop(k, None)
+        if token and token in st['admitted']:
+            st['admitted'][token] = now
+            if ip:
+                ips[ip] = (token, now)
+            return True, None
+        bound = ips.get(ip) if ip else None
+        if bound and now - bound[1] < 60:
+            return False, None
+        if len(st['admitted']) < max(1, int(cfg['max_concurrent'])):
+            new = None
+            if not token:
+                token = secrets.token_hex(16)
+                new = token
+            st['waiting'] = [(t, ts) for t, ts in st['waiting'] if t != token]
+            if token not in st['admitted']:
+                st['served'] += 1
+            st['admitted'][token] = now
+            if ip:
+                ips[ip] = (token, now)
+            return True, new
         return False, None
-    if len(st['admitted']) < max(1, int(cfg['max_concurrent'])):
-        new = None
-        if not token:
-            token = secrets.token_hex(16)
-            new = token
-        st['waiting'] = [(t, ts) for t, ts in st['waiting'] if t != token]
-        if token not in st['admitted']:
-            st['served'] += 1
-        st['admitted'][token] = now
-        if ip:
-            ips[ip] = (token, now)
-        return True, new
-    return False, None
 
 
 def queue_cookie_token(self):
@@ -2441,7 +2560,7 @@ def handle_queue_admit(self):
     if ok:
         extra = []
         if new_token:
-            extra.append(('X-Slext-Set-Cookie',
+            extra.append(('Set-Cookie',
                           '%s=%s; Path=/; Max-Age=86400; SameSite=Lax' % (QUEUE_COOKIE, new_token)))
         return self._json(200, {'ok': True}, extra=extra)
     return self._json(403, {'ok': False, 'queue': True})
@@ -2463,6 +2582,13 @@ def handle_queue_go(self):
         to = ''
     if not to or not to.startswith('/') or to.startswith('//') or '\\' in to:
         to = '/'
+    elif any(ord(c) < 0x20 or ord(c) == 0x7f for c in to):
+        to = '/'
+    else:
+        try:
+            to.encode('ascii')
+        except UnicodeEncodeError:
+            to = urllib.parse.quote(to, safe='/%?&=')
     site = site_by_host(host) if host else None
     if not site:
         return self._redirect(to)
@@ -2497,25 +2623,20 @@ def handle_queue_status(self):
     if not site:
         return self._json(200, {'ok': False, 'error': 'site not found'})
     cfg = queue_cfg(host)
-    token = ''
-    try:
-        for part in (self.headers.get('Cookie') or '').split(';'):
-            part = part.strip()
-            if part.startswith(QUEUE_COOKIE + '='):
-                token = part.split('=', 1)[1][:64]
-    except Exception:
-        token = ''
-    if not token:
-        token = secrets.token_hex(16)
-    new_token, state, pos, total = queue_status(host, token)
     page_cfg = waiting_cfg(host)['page'] or {}
+    page_out = {k: page_cfg.get(k) for k in ('title', 'message', 'note', 'posttext', 'brand', 'color')}
+    if not cfg.get('enabled'):
+        return self._json(200, {'ok': True, 'state': 'pass', 'pos': 0, 'total': 0,
+                                'enabled': False, 'page': page_out})
+    cookie_tok = queue_cookie_token(self)
+    token = cookie_tok or secrets.token_hex(16)
+    _new_token, state, pos, total = queue_status(host, token)
     data = {'ok': True, 'state': state, 'pos': pos, 'total': total,
-            'enabled': bool(cfg.get('enabled')),
-            'page': {k: page_cfg.get(k) for k in ('title', 'message', 'note', 'posttext', 'brand', 'color')}}
+            'enabled': True, 'page': page_out}
     extra = []
-    if not token and new_token:
+    if not cookie_tok:
         extra.append(('Set-Cookie',
-                      '%s=%s; Path=/; Max-Age=%d; SameSite=Lax' % (QUEUE_COOKIE, new_token, 86400)))
+                      '%s=%s; Path=/; Max-Age=%d; SameSite=Lax' % (QUEUE_COOKIE, token, 86400)))
     return self._json(200, data, extra=extra)
 
 
@@ -2574,7 +2695,13 @@ def queue_sync_map():
         if os.path.exists(QUEUE_MAP_FILE):
             cur = open(QUEUE_MAP_FILE, encoding='utf-8', errors='replace').read()
         if cur != txt:
-            open(QUEUE_MAP_FILE, 'w', encoding='utf-8').write(txt)
+            tmp = QUEUE_MAP_FILE + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                f.write(txt)
+            os.replace(tmp, QUEUE_MAP_FILE)
+            rc, out, err = run(['docker', 'exec', 'safeline-tengine', 'nginx', '-t'], timeout=60)
+            if rc != 0:
+                return False
             run(['docker', 'exec', 'safeline-tengine', 'nginx', '-s', 'reload'], timeout=30)
             return True
     except OSError:
@@ -2586,33 +2713,35 @@ def queue_status(host, token):
     """Статус посетителя: pass / wait / full. Токен регистрируется при отсутствии."""
     now = time.time()
     cfg = queue_cfg(host)
-    st = queue_state(host)
-    # чистим старых
-    for t in [t for t, ts in st['admitted'].items() if now - ts > max(60, int(cfg['ttl']))]:
-        st['admitted'].pop(t, None)
-    st['waiting'] = [(t, ts) for t, ts in st['waiting'] if now - ts < QUEUE_WAIT_TTL]
-    if not token:
-        return None, 'wait', 0, 0
-    admitted = token in st['admitted']
-    if admitted:
-        st['admitted'][token] = now
-        return token, 'pass', 0, 0
-    waiting = [t for t, _ in st['waiting']]
-    if token not in waiting:
-        st['waiting'].append((token, now))
-        st['peak_waiting'] = max(st['peak_waiting'], len(st['waiting']))
+    with LOCK:
+        st = queue_state(host)
+        # чистим старых
+        for t in [t for t, ts in list(st['admitted'].items()) if now - ts > max(60, int(cfg['ttl']))]:
+            st['admitted'].pop(t, None)
+        st['waiting'] = [(t, ts) for t, ts in st['waiting'] if now - ts < QUEUE_WAIT_TTL]
+        if not token:
+            return None, 'wait', 0, 0
+        if token in st['admitted']:
+            st['admitted'][token] = now
+            return token, 'pass', 0, 0
         waiting = [t for t, _ in st['waiting']]
-        if len(waiting) > max(1, int(cfg['max_waiting'])):
+        if token not in waiting:
+            st['waiting'].append((token, now))
+            st['peak_waiting'] = max(st['peak_waiting'], len(st['waiting']))
+            waiting = [t for t, _ in st['waiting']]
+            if len(waiting) > max(1, int(cfg['max_waiting'])):
+                st['waiting'] = [(t, ts) for t, ts in st['waiting'] if t != token]
+                return token, 'full', 0, 0
+        else:
+            # посетитель ещё в очереди: продлеваем его отметку, чтобы не потерять место
+            st['waiting'] = [(t, now if t == token else ts) for t, ts in st['waiting']]
+        if len(st['admitted']) < max(1, int(cfg['max_concurrent'])):
             st['waiting'] = [(t, ts) for t, ts in st['waiting'] if t != token]
-            return token, 'full', 0, 0
-    active = len(st['admitted'])
-    if active < max(1, int(cfg['max_concurrent'])):
-        st['waiting'] = [(t, ts) for t, ts in st['waiting'] if t != token]
-        st['admitted'][token] = now
-        st['served'] += 1
-        return token, 'pass', 0, 0
-    pos = waiting.index(token) + 1 if token in waiting else len(waiting) + 1
-    return token, 'wait', pos, len(st['waiting'])
+            st['admitted'][token] = now
+            st['served'] += 1
+            return token, 'pass', 0, 0
+        pos = waiting.index(token) + 1 if token in waiting else len(waiting) + 1
+        return token, 'wait', pos, len(st['waiting'])
 
 
 def queue_patch_reload():
@@ -2733,10 +2862,18 @@ def real_rate_pm(window):
     if RATE_CACHE['window'] == window and now - RATE_CACHE['at'] < 60:
         return RATE_CACHE['value']
     since = int(now - window)
-    files = sorted(glob.glob(os.path.join(SITE_LOG_DIR, 'accesslog_*')))
-    files += sorted(glob.glob(os.path.join(LOG_DIR, 'access.log*')))
+    files = glob.glob(os.path.join(SITE_LOG_DIR, 'accesslog_*'))
+    files += glob.glob(os.path.join(LOG_DIR, 'access.log*'))
+
+    def _mt(path):
+        try:
+            return os.path.getmtime(path)
+        except OSError:
+            return 0
+    # Сначала самые свежие файлы: как только окно покрыто, дальше читать не нужно.
+    files.sort(key=_mt, reverse=True)
     count = 0
-    for path in reversed(files):
+    for path in files:
         if path.endswith('.gz'):
             # gz читается с начала; решаем по последней строке, накрывает ли файл окно
             last_ts = 0
@@ -2753,7 +2890,7 @@ def real_rate_pm(window):
                             _old, hit = _rate_count_line(line, since)
                             if hit:
                                 count += 1
-            except OSError:
+            except (OSError, EOFError):
                 continue
             if last_ts and last_ts < since:
                 break
@@ -2795,6 +2932,25 @@ def _wr_sync_sessions(site, host, notify_on):
         pass
 
 
+def _hm_norm(v, default):
+    m = re.match(r'^(\d{1,2}):(\d{2})$', str(v or ''))
+    if not m:
+        return default
+    h, mi = int(m.group(1)), int(m.group(2))
+    if h > 23 or mi > 59:
+        return default
+    return '%02d:%02d' % (h, mi)
+
+
+def _time_in_window(frm, to, hm):
+    """Окно расписания с поддержкой перехода через полночь (22:00–06:00)."""
+    frm = _hm_norm(frm, '00:00')
+    to = _hm_norm(to, '23:59')
+    if frm <= to:
+        return frm <= hm <= to
+    return hm >= frm or hm <= to
+
+
 def _wr_tick(first=False):
     with LOCK:
         hosts = list(((STATE.get('waiting') or {}).get('sites') or {}).keys())
@@ -2831,7 +2987,7 @@ def _wr_tick(first=False):
                 hm = time.strftime('%H:%M')
                 days = sch.get('days') or []
                 dow = int(time.strftime('%u'))
-                active = (dow in days) and (str(sch.get('from', '00:00')) <= hm <= str(sch.get('to', '23:59')))
+                active = (dow in days) and _time_in_window(sch.get('from'), sch.get('to'), hm)
                 if bool(active) != actual:
                     desired, source = bool(active), 'schedule'
             except Exception:
@@ -3333,8 +3489,13 @@ def loadtest_run(job_id, ev):
                 j['error'] = str(e)[:300]
                 save_state(STATE)
     finally:
+        LT_JOBS.pop(job_id, None)
         if paused:
-            lt_resume_protection(paused)
+            with LOCK:
+                cur = STATE.get('loadtest') or {}
+                newer_running = cur.get('id') != job_id and cur.get('status') == 'running'
+            if not newer_running:
+                lt_resume_protection(paused)
 
 
 PX_LOG = '/data/safeline/logs/nginx/slext_traffic.log'
@@ -3793,6 +3954,8 @@ SLEXT_PERMS = [
     ('crowdsec.view', 'CrowdSec — просмотр'),
     ('crowdsec.ban', 'CrowdSec — бан и разбан'),
     ('proxy.view', 'Проксирование — аналитика'),
+    ('lb.view', 'Балансировка — просмотр'),
+    ('lb.edit', 'Балансировка — изменение'),
     ('dns.view', 'DNS и TLS — просмотр'),
     ('dns.check', 'DNS и TLS — запуск проверки'),
     ('wr.view', 'Зал ожидания — просмотр'),
@@ -3816,7 +3979,7 @@ PERM_KEYS = [k for k, _ in SLEXT_PERMS]
 ALL_VIEW = [k for k in PERM_KEYS if k.endswith('.view')]
 SLEXT_ROLES = {
     'admin': PERM_KEYS,
-    'operator': ALL_VIEW + ['crowdsec.ban', 'wr.control', 'lt.run', 'dns.check'],
+    'operator': ALL_VIEW + ['crowdsec.ban', 'wr.control', 'lt.run', 'dns.check', 'lb.edit'],
     'viewer': ALL_VIEW,
     'custom': [],
 }
@@ -3827,6 +3990,9 @@ PERM_GET = {
     '/api/geo/check': 'geo.view',
     '/api/crowdsec': 'crowdsec.view',
     '/api/proxy': 'proxy.view',
+    '/api/security': 'proxy.view',
+    '/api/traffic': 'proxy.view',
+    '/api/lb': 'lb.view',
     '/api/dns': 'dns.view',
     '/api/waiting': 'wr.view',
     '/api/loadtest': 'lt.view',
@@ -3844,6 +4010,7 @@ PERM_GET = {
 PERM_POST = {
     '/api/crowdsec/ban': 'crowdsec.ban',
     '/api/crowdsec/unban': 'crowdsec.ban',
+    '/api/lb': 'lb.edit',
     '/api/dns/check': 'dns.check',
     '/api/waiting/config': 'wr.control',
     '/api/waiting/queue': 'wr.control',
@@ -3976,11 +4143,14 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _body(self):
-        n = int(self.headers.get('Content-Length') or 0)
+        try:
+            n = int(self.headers.get('Content-Length') or 0)
+        except (TypeError, ValueError):
+            return {}
         if n <= 0 or n > 1048576:
             return {}
         try:
-            return json.loads(self.rfile.read(n).decode() or '{}')
+            return json.loads(self.rfile.read(n).decode('utf-8', 'replace') or '{}')
         except ValueError:
             return {}
 
@@ -4099,7 +4269,7 @@ class H(BaseHTTPRequestHandler):
                 hours = max(1, min(168, int(qs.get('hours', ['24'])[0])))
             except ValueError:
                 hours = 24
-            return self._json(200, security_stats(hours))
+            return self._json(200, security_stats(hours, sites=self._hosts_allowed() or None))
         if u.path == '/api/waiting':
             sites = site_list()
             allowed = self._hosts_allowed()
@@ -4674,10 +4844,7 @@ class H(BaseHTTPRequestHandler):
                     s['days'] = days or [1, 2, 3, 4, 5, 6, 7]
                     for k in ('from', 'to'):
                         if k in sch:
-                            v = str(sch[k])[:5]
-                            if not re.match(r'^\d{1,2}:\d{2}$', v):
-                                v = '00:00'
-                            s[k] = v
+                            s[k] = _hm_norm(sch[k], '00:00' if k == 'from' else '23:59')
                 au = body.get('auto') or {}
                 if au:
                     a = cfg.setdefault('auto', {})
@@ -4762,10 +4929,10 @@ class H(BaseHTTPRequestHandler):
                 params['err_pct'] = max(0.5, min(50.0, float(body.get('err_pct') or 3.0)))
             except (TypeError, ValueError):
                 params['err_pct'] = 3.0
+            if any(not e.is_set() for e in list(LT_JOBS.values())):
+                return self._json(409, {'ok': False, 'error': 'тест уже выполняется'})
             with LOCK:
                 cur = STATE.get('loadtest') or {}
-                if cur.get('status') == 'running' and time.time() - int(cur.get('updated_at') or 0) < 120:
-                    return self._json(409, {'ok': False, 'error': 'тест уже выполняется'})
                 arch = cur.get('archive') or []
                 jid = str(int(time.time()))
                 STATE['loadtest'] = {'id': jid, 'status': 'running', 'params': params,

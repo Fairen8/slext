@@ -3,8 +3,7 @@ Description=Reapply SLExt injection when SafeLine rewrites site configs
 
 [Path]
 PathChanged=/data/safeline/resources/nginx/sites-enabled
-PathChanged=/data/safeline/resources/nginx/sites-enabled/IF_backend_1
-PathModified=/data/safeline/resources/nginx/sites-enabled/IF_backend_1
+PathModified=/data/safeline/resources/nginx/sites-enabled
 Unit=slext-apply.service
 
 [Install]

@@ -76,6 +76,34 @@ cp -a "$SRC/bin" "$SRC/www" "$SRC/conf" /opt/slext/
 chmod +x /opt/slext/bin/*.sh 2>/dev/null || true
 chmod +x /opt/slext/bin/*.py 2>/dev/null || true
 
+# TLS-пара mgt.crt/mgt.key: конфиги nginx, которые ссылаются на /opt/slext/conf/mgt.key,
+# не должны падать с "BIO_new_file() failed: No such file or directory".
+ensure_mgt_cert() {
+  crt=/opt/slext/conf/mgt.crt
+  key=/opt/slext/conf/mgt.key
+  need=0
+  [ -s "$crt" ] || need=1
+  [ -s "$key" ] || need=1
+  if [ "$need" = "0" ]; then
+    c="$(openssl x509 -noout -modulus -in "$crt" 2>/dev/null | openssl md5 2>/dev/null)"
+    k="$(openssl rsa -noout -modulus -in "$key" 2>/dev/null | openssl md5 2>/dev/null)"
+    [ -n "$c" ] && [ "$c" = "$k" ] || need=1
+  fi
+  if [ "$need" = "1" ]; then
+    openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+      -keyout "$key" -out "$crt" -subj '/CN=SafeLine' >/dev/null 2>&1
+  fi
+  chmod 600 "$key" 2>/dev/null || true
+  chmod 644 "$crt" 2>/dev/null || true
+}
+ensure_mgt_cert
+# Если на хосте есть свой nginx, ссылающийся на эту пару, — подхватываем её без падения.
+if command -v nginx >/dev/null 2>&1; then
+  if nginx -t >/dev/null 2>&1; then
+    systemctl reload nginx >/dev/null 2>&1 || nginx -s reload >/dev/null 2>&1 || true
+  fi
+fi
+
 echo "[4/8] Конфигурация (slext.env)..."
 if [ ! -f /opt/slext/conf/slext.env ]; then
   PGPASS="$(docker exec safeline-pg printenv POSTGRES_PASSWORD 2>/dev/null || true)"

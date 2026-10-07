@@ -43,6 +43,9 @@ for d in bin www conf systemd; do
   if [ -f /opt/slext/conf/lb-upstreams.conf ] && [ "$d" = "conf" ]; then
     cp -a /opt/slext/conf/lb-upstreams.conf /opt/slext.old/conf-lb-upstreams.conf 2>/dev/null || true
   fi
+  if [ -f /opt/slext/conf/mgt.key ] && [ "$d" = "conf" ]; then
+    cp -a /opt/slext/conf/mgt.key /opt/slext.old/conf-mgt.key 2>/dev/null || true
+  fi
   if [ -d /opt/slext/conf/geo ] && [ "$d" = "conf" ]; then
     cp -a /opt/slext/conf/geo /opt/slext.old/conf-geo 2>/dev/null || true
   fi
@@ -65,21 +68,30 @@ fi
 if [ -f /opt/slext.old/conf-lb-upstreams.conf ]; then
   cp -a /opt/slext.old/conf-lb-upstreams.conf /opt/slext/conf/lb-upstreams.conf
 fi
+if [ -f /opt/slext.old/conf-mgt.key ]; then
+  cp -a /opt/slext.old/conf-mgt.key /opt/slext/conf/mgt.key
+  chmod 600 /opt/slext/conf/mgt.key 2>/dev/null || true
+fi
 if [ -d /opt/slext.old/conf-geo ]; then
   cp -a /opt/slext.old/conf-geo /opt/slext/conf/geo
 fi
 rm -rf /opt/slext.old/conf-slext.env /opt/slext.old/conf-state.json \
-       /opt/slext.old/conf-lb-upstreams.conf /opt/slext.old/conf-geo
+       /opt/slext.old/conf-lb-upstreams.conf /opt/slext.old/conf-mgt.key /opt/slext.old/conf-geo
 
 # 3. Зависимости
 if ! python3 -c 'import psycopg2' >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
+  timeout 300 apt-get update -qq || true
   timeout 300 apt-get install -y -qq python3-psycopg2 || true
 fi
 
 # 4. Конфигурация доступа к БД (если ещё нет)
 if [ ! -f /opt/slext/conf/slext.env ]; then
-  PGPASS="$(timeout 30 docker exec safeline-pg printenv POSTGRES_PASSWORD)"
+  PGPASS="$(timeout 30 docker exec safeline-pg printenv POSTGRES_PASSWORD 2>/dev/null || true)"
+  if [ -z "$PGPASS" ]; then
+    echo "ОШИБКА: не удалось получить пароль PostgreSQL из safeline-pg"
+    exit 1
+  fi
   printf 'PGHOST=127.0.0.1\nPGUSER=safeline-ce\nPGPASSWORD=%s\nPGDATABASE=safeline-ce\n' "$PGPASS" > /opt/slext/conf/slext.env
   chmod 600 /opt/slext/conf/slext.env
 fi
