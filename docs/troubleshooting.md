@@ -1,5 +1,37 @@
 # Диагностика
 
+## Сайт получает 468 (challenge), хотя «Human verification» выключен
+
+SafeLine хранит проверку в **per-site политике**, а не в глобальном тумблере. Признак:
+в `mgt_website.challenge_id` у сайта указан id правила из `mgt_policy` (например, `7`),
+тогда как у рабочего сайта там `0`. Патч конфигов сам по себе не помогает — mgt должен
+перепубликовать политику.
+
+Проверка и лечение (на сервере, от root):
+
+```bash
+docker exec safeline-pg psql -U safeline-ce -d safeline-ce -c \
+  "SELECT id, comment, challenge_id FROM mgt_website ORDER BY id"
+docker exec safeline-pg psql -U safeline-ce -d safeline-ce -c \
+  "SELECT id, is_enabled, action, level, site_id FROM mgt_policy WHERE id=<challenge_id>"
+
+# отключить challenge для сайта (подставьте id сайта)
+docker exec safeline-pg psql -U safeline-ce -d safeline-ce -c \
+  "UPDATE mgt_policy SET is_enabled=false, updated_at=now() WHERE id=<policy_id>"
+docker exec safeline-pg psql -U safeline-ce -d safeline-ce -c \
+  "UPDATE mgt_website SET challenge_id=0, updated_at=now() WHERE id=<site_id>"
+
+# перепубликовать конфиг в детектор
+docker restart safeline-mgt
+
+# проверка снаружи: 200 / 302 / 405 / 400, без /.safeline/ и sl-session
+curl -s -o /dev/null -w '%{http_code}\n' https://site/api/v1/health
+curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' https://site/
+```
+
+Прямые правки в БД применяются только после перезапуска `safeline-mgt`. Перед
+изменениями сохраните строки `mgt_website`/`mgt_policy` (JSON) — для отката.
+
 ## Быстрый чек-лист
 
 ```bash
