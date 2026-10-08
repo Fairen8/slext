@@ -1,14 +1,18 @@
 name: hotfix
 
-# Временный workflow для операций на сервере SafeLine через тот же SSH-доступ,
-# что и деплой. Только workflow_dispatch, никаких автозапусков.
+# Ops-инструмент: выполнить произвольный скрипт на сервере SafeLine через тот же
+# SSH-доступ, что и деплой. Только workflow_dispatch; запускается из ветки prod
+# (её разрешает environment production). Тело скрипта передаётся input-ом,
+# поэтому новые коммиты не нужны.
 on:
   workflow_dispatch:
     inputs:
       script:
-        description: 'Скрипт в репозитории'
+        description: 'Shell-скрипт (выполнится на сервере; вывод — в лог)'
         required: true
-        default: 'deploy/hotfix.sh'
+        default: |
+          id
+          hostname
 
 permissions:
   contents: read
@@ -19,8 +23,6 @@ jobs:
     timeout-minutes: 20
     environment: production
     steps:
-      - uses: actions/checkout@v7
-
       - name: Настройка SSH
         run: |
           mkdir -p ~/.ssh
@@ -28,19 +30,16 @@ jobs:
           chmod 600 ~/.ssh/id
           ssh-keyscan -p "${{ secrets.SSH_PORT }}" -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
 
-      - name: Загрузка скрипта на сервер
+      - name: Выполнение на сервере
+        env:
+          HOTFIX: ${{ inputs.script }}
         run: |
           set -euo pipefail
-          ssh -i ~/.ssh/id -p "${{ secrets.SSH_PORT }}" \
+          printf '%s' "$HOTFIX" | ssh -i ~/.ssh/id -p "${{ secrets.SSH_PORT }}" \
             -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 \
             "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            "cat > /tmp/slext-hotfix.sh && chmod 755 /tmp/slext-hotfix.sh" \
-            < "${{ inputs.script }}"
-
-      - name: Выполнение на сервере
-        run: |
-          set -euo pipefail
+            "cat > /tmp/slext-hotfix.sh && chmod 755 /tmp/slext-hotfix.sh"
           timeout 900 ssh -i ~/.ssh/id -p "${{ secrets.SSH_PORT }}" \
             -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
             "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            "sudo -n bash /tmp/slext-hotfix.sh 2>&1 || bash /tmp/slext-hotfix.sh 2>&1"
+            "if sudo -n true 2>/dev/null; then sudo -n bash /tmp/slext-hotfix.sh; else bash /tmp/slext-hotfix.sh; fi; rm -f /tmp/slext-hotfix.sh"
