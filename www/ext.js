@@ -2,7 +2,7 @@
   'use strict';
 
   var API = location.origin + '/extapi';
-  var EXTVER = '56';
+  var EXTVER = '57';
 
   function tok() {
     try { return localStorage.getItem('safeline_auth') || ''; } catch (e) { return ''; }
@@ -2719,9 +2719,14 @@
       '<option value="24h">24 часа</option><option value="168h">7 дней</option></select>' +
       '<button class="sl-btn" id="sl-cs-ban">Забанить</button>' +
       '<button class="sl-btn" id="sl-cs-refresh">Обновить</button></div>' +
+      '<div class="sl-sub" data-sl-tip="Доверенные IP и CIDR не банятся CrowdSec: добавляются в parsers/s02-enrich/slext-trusted.yaml, текущий бан снимается автоматически.">Доверенные IP — не банятся</div>' +
+      '<div class="sl-row"><input class="sl-input" id="sl-cs-trust" placeholder="IP или CIDR (напр. 144.31.156.201)">' +
+      '<button class="sl-btn sl-btn-pri" id="sl-cs-trust-add">Доверять</button></div>' +
+      '<div class="sl-chips" id="sl-cs-trusted"><span class="sl-hint">Загрузка…</span></div>' +
       '<div id="sl-cs-list"><div class="sl-hint">Загрузка…</div></div></div>');
     host.appendChild(card);
     lockBtn(card, 'sl-cs-ban', 'crowdsec.ban');
+    lockBtn(card, 'sl-cs-trust-add', 'crowdsec.ban');
     card.addEventListener('click', function (e) {
       if (e.target.id === 'sl-cs-refresh') return load();
       if (e.target.id === 'sl-cs-ban') {
@@ -2735,9 +2740,24 @@
         });
         return;
       }
+      if (e.target.id === 'sl-cs-trust-add') {
+        var v = (document.getElementById('sl-cs-trust').value || '').trim();
+        if (!v) return;
+        api('/api/crowdsec/trust', { method: 'POST', body: { ip: v } }).then(function (r) {
+          toast(r.ok ? ('Доверенный IP добавлен: ' + v + ' (бан снят)') : ('Ошибка: ' + r.info), !r.ok);
+          if (r.ok) document.getElementById('sl-cs-trust').value = '';
+          load();
+        });
+        return;
+      }
       if (e.target.hasAttribute && e.target.hasAttribute('data-sl-unban')) {
         api('/api/crowdsec/unban', { method: 'POST', body: { ip: e.target.getAttribute('data-sl-unban') } })
           .then(function (r) { toast(r.ok ? 'Бан снят' : ('Ошибка: ' + r.info), !r.ok); load(); });
+        return;
+      }
+      if (e.target.hasAttribute && e.target.hasAttribute('data-sl-trust-x')) {
+        api('/api/crowdsec/untrust', { method: 'POST', body: { ip: e.target.getAttribute('data-sl-trust-x') } })
+          .then(function (r) { toast(r.ok ? 'Убрано из доверенных' : ('Ошибка: ' + r.info), !r.ok); load(); });
       }
     });
     load();
@@ -2745,10 +2765,19 @@
     function load() {
       api('/api/crowdsec').then(function (d) {
         var node = document.getElementById('sl-cs-list');
+        var tr = document.getElementById('sl-cs-trusted');
         if (!node) return;
         if (!d.ok) { node.innerHTML = '<div class="sl-err">' + esc(d.error || 'недоступно') + '</div>'; return; }
+        if (tr) {
+          tr.innerHTML = (d.trusted || []).map(function (x) {
+            return '<span class="sl-chip" data-sl-trust="' + esc(x) + '">' + esc(x) +
+              ' <i data-sl-trust-x="' + esc(x) + '" title="Убрать из доверенных">&times;</i></span>';
+          }).join('') || '<span class="sl-hint">Пока пусто — добавьте свои IP, чтобы их не банило.</span>';
+        }
         var rows = (d.decisions || []).map(function (x) {
-          return '<tr><td class="sl-mono">' + esc(x.ip) + '</td><td>' + esc(x.country || '—') + '</td>' +
+          var trusted = (d.trusted || []).indexOf(x.ip) >= 0;
+          return '<tr><td class="sl-mono">' + esc(x.ip) + (trusted ? ' <span class="sl-badge">доверенный</span>' : '') + '</td>' +
+            '<td>' + esc(x.country || '—') + '</td>' +
             '<td>' + esc(x.as_org || '—') + '</td><td>' + esc(x.scenario) + '</td>' +
             '<td>' + esc(x.duration) + '</td><td>' + esc(x.type) + '</td>' +
             '<td><button class="sl-btn sl-btn-danger" data-sl-unban="' + esc(x.ip) + '" title="Снять бан"' +

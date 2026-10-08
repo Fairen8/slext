@@ -67,5 +67,14 @@ check('11 api_zone_name: пустой хост', mod.api_zone_name('') == 'slext
 check('12 api_rl_paths_re: якорь', mod.api_rl_paths_re(['/api/v1/']) == '~^(/api/v1/)')
 check('13 api_rl_paths_re: без путей', mod.api_rl_paths_re([]) == '^$')
 
+# CrowdSec: доверенные IP/CIDR
+check('14 trusted_entry_norm: ip', mod.trusted_entry_norm(' 1.2.3.4 ') == '1.2.3.4')
+check('15 trusted_entry_norm: cidr', mod.trusted_entry_norm('10.0.0.5/24') == '10.0.0.0/24')
+check('16 trusted_entry_norm: мусор', mod.trusted_entry_norm('not-an-ip') is None)
+_txt = mod.trusted_render(['1.2.3.4', '10.0.0.0/8'])
+check('17 trusted_render: ip и cidr', '- "1.2.3.4"' in _txt and 'cidr:' in _txt)
+check('18 trusted_parse: roundtrip', mod.trusted_parse(_txt) == ['1.2.3.4', '10.0.0.0/8'])
+check('19 trusted_parse: пусто', mod.trusted_parse('') == [])
+
 print('FAIL=%d' % FAIL)
 sys.exit(1 if FAIL else 0)

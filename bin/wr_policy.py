@@ -4,6 +4,7 @@
 Используется slext-api.py, patch_site_page.py и тестами.
 Никаких обращений к сети/файлам/БД.
 """
+import ipaddress
 import re
 
 API_PATH_RE = re.compile(r'^/[A-Za-z0-9_\-./%]*$')
@@ -42,6 +43,49 @@ def api_rl_paths_re(paths):
     """Regex для map: совпадает с любым из указанных префиксов (с якорем)."""
     inner = '|'.join(re.escape(str(p)) for p in (paths or []) if str(p).startswith('/'))
     return '~^(%s)' % inner if inner else '^$'
+
+
+# --- CrowdSec: доверенные IP/CIDR (whitelist) ---
+
+def trusted_entry_norm(v):
+    """IP или CIDR → каноническая строка; None если некорректно."""
+    s = str(v or '').strip()
+    if not s:
+        return None
+    try:
+        if '/' in s:
+            return str(ipaddress.ip_network(s, strict=False))
+        return str(ipaddress.ip_address(s))
+    except ValueError:
+        return None
+
+
+def trusted_parse(text):
+    """Разобрать список из нашего whitelist-файла (строки '- "значение"')."""
+    out = []
+    for line in str(text or '').splitlines():
+        m = re.match(r'^\s*-\s*"?([^"#\n]+?)"?\s*$', line)
+        if not m:
+            continue
+        e = trusted_entry_norm(m.group(1))
+        if e and e not in out:
+            out.append(e)
+    return out
+
+
+def trusted_render(entries):
+    """Собрать YAML-файл whitelist CrowdSec (parsers/s02-enrich)."""
+    ips = [e for e in (entries or []) if '/' not in e]
+    cidrs = [e for e in (entries or []) if '/' in e]
+    lines = ['name: slext/trusted',
+             'description: "Trusted IPs/CIDRs managed by SLExt - never ban"',
+             'whitelist:',
+             '  reason: "SLExt trusted list"']
+    lines.append('  ip:' if ips else '  ip: []')
+    lines += ['    - "%s"' % e for e in ips]
+    lines.append('  cidr:' if cidrs else '  cidr: []')
+    lines += ['    - "%s"' % e for e in cidrs]
+    return '\n'.join(lines) + '\n'
 
 
 def wr_auto_decision(au, st, actual, rate, now):
