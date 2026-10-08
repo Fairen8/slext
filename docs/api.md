@@ -36,6 +36,8 @@ CORS разрешён только для origin панели; `/api/waiting/sta
 | GET | `/api/crowdsec` | `crowdsec.view` | активные решения CrowdSec |
 | POST | `/api/crowdsec/ban` | `crowdsec.ban` | `{ip, duration, reason}` |
 | POST | `/api/crowdsec/unban` | `crowdsec.ban` | `{ip}` |
+| POST | `/api/crowdsec/trust` | `crowdsec.ban` | `{ip}` — IP/CIDR в whitelist CrowdSec + снятие бана |
+| POST | `/api/crowdsec/untrust` | `crowdsec.ban` | `{ip}` — убрать из whitelist |
 | GET | `/api/export?hours=&format=csv\|json&site=&action=&atype=&risk=` | `overview.view` | экспорт атак (учитывает домены) |
 
 ## Зал ожидания

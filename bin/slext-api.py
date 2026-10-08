@@ -28,7 +28,8 @@ from string import Template
 import psycopg2
 
 from wr_policy import (api_norm_paths, api_rl_key_var, api_rl_paths_re,  # noqa: E402
-                       api_zone_name, clamp_int, wr_auto_decision)
+                       api_zone_name, clamp_int, trusted_entry_norm,
+                       trusted_parse, trusted_render, wr_auto_decision)
 
 VERSION = '3.0'
 BASE = '/opt/slext'
@@ -41,6 +42,7 @@ GEO_NGINX_DIR = os.path.join(NGINX_ROOT, 'slext-geo')
 PAGES_DIR = os.path.join(NGINX_ROOT, 'slext-pages')
 API_WL_FILE = os.path.join(NGINX_ROOT, 'conf.d', 'zz_slext_api_wl.conf')
 API_RL_FILE = os.path.join(NGINX_ROOT, 'conf.d', 'zz_slext_api_rl.conf')
+CS_TRUSTED_FILE = '/etc/crowdsec/parsers/s02-enrich/slext-trusted.yaml'
 APPLY_SH = os.path.join(BASE, 'bin', 'apply-injection.sh')
 PAGE_PATCH = os.path.join(BASE, 'bin', 'patch_site_page.py')
 COUNTRIES_FILE = os.path.join(BASE, 'conf', 'countries.json')
@@ -998,7 +1000,8 @@ def crowdsec_list():
                 'country': meta.get('IsoCode', ''), 'asn': meta.get('ASNNumber', ''),
                 'as_org': meta.get('ASNOrg', ''),
             })
-    data = {'ok': True, 'decisions': decisions, 'count': len(decisions)}
+    data = {'ok': True, 'decisions': decisions, 'count': len(decisions),
+            'trusted': cs_trusted_read()}
     CS_CACHE['data'] = data
     CS_CACHE['at'] = now
     return data
@@ -1032,6 +1035,64 @@ def crowdsec_unban(ip):
     rc, out, err = cscli(['decisions', 'delete', '--ip', ip])
     CS_CACHE['data'] = None
     return rc == 0, (err or out)[:300]
+
+
+def cs_trusted_read():
+    """Доверенные IP/CIDR из нашего whitelist-файла CrowdSec."""
+    try:
+        with open(CS_TRUSTED_FILE, encoding='utf-8') as f:
+            return trusted_parse(f.read())
+    except OSError:
+        return []
+
+
+def cs_trusted_write(entries, reload=True):
+    txt = trusted_render(entries)
+    try:
+        os.makedirs(os.path.dirname(CS_TRUSTED_FILE), exist_ok=True)
+        tmp = CS_TRUSTED_FILE + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            f.write(txt)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, CS_TRUSTED_FILE)
+    except OSError as e:
+        return False, str(e)[:200]
+    if reload:
+        rc, out, err = run(['systemctl', 'reload', 'crowdsec'], timeout=30)
+        if rc != 0:
+            rc2, out2, err2 = run(['systemctl', 'restart', 'crowdsec'], timeout=60)
+            if rc2 != 0:
+                return False, (err or out or err2 or out2)[:200]
+    return True, 'ok'
+
+
+def crowdsec_trust(entry):
+    """Добавить IP/CIDR в whitelist и снять текущий бан."""
+    e = trusted_entry_norm(entry)
+    if not e:
+        return False, 'bad ip/cidr'
+    cur = cs_trusted_read()
+    if e not in cur:
+        cur.append(e)
+    ok, info = cs_trusted_write(cur)
+    if not ok:
+        return False, info
+    if '/' not in e:
+        cscli(['decisions', 'delete', '--ip', e])
+    CS_CACHE['data'] = None
+    return True, 'ok'
+
+
+def crowdsec_untrust(entry):
+    """Убрать IP/CIDR из whitelist (баны не возвращаются автоматически)."""
+    e = trusted_entry_norm(entry)
+    if not e:
+        return False, 'bad ip/cidr'
+    cur = [x for x in cs_trusted_read() if x != e]
+    ok, info = cs_trusted_write(cur)
+    if ok:
+        CS_CACHE['data'] = None
+    return ok, info
 
 
 def node_up(addr):
@@ -4090,6 +4151,8 @@ PERM_GET = {
 PERM_POST = {
     '/api/crowdsec/ban': 'crowdsec.ban',
     '/api/crowdsec/unban': 'crowdsec.ban',
+    '/api/crowdsec/trust': 'crowdsec.ban',
+    '/api/crowdsec/untrust': 'crowdsec.ban',
     '/api/lb': 'lb.edit',
     '/api/dns/check': 'dns.check',
     '/api/waiting/config': 'wr.control',
@@ -5128,6 +5191,14 @@ class H(BaseHTTPRequestHandler):
         if u.path == '/api/crowdsec/unban':
             ok, info = crowdsec_unban(body.get('ip'))
             return self._json(200 if ok else 400, {'ok': ok, 'info': info})
+        if u.path == '/api/crowdsec/trust':
+            ok, info = crowdsec_trust(body.get('ip') or body.get('value'))
+            return self._json(200 if ok else 400,
+                              {'ok': ok, 'info': info, 'trusted': cs_trusted_read()})
+        if u.path == '/api/crowdsec/untrust':
+            ok, info = crowdsec_untrust(body.get('ip') or body.get('value'))
+            return self._json(200 if ok else 400,
+                              {'ok': ok, 'info': info, 'trusted': cs_trusted_read()})
         return self._json(404, {'ok': False, 'error': 'not found'})
 
 
